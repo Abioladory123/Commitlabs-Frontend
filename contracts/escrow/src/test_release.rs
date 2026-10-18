@@ -8,6 +8,19 @@ const PRINCIPAL: i128 = 1_000_000;
 const POOL: i128 = 100_000;
 
 #[test]
+fn settle_after_release_is_invalid_state() {
+    let f = Fixture::new(PRINCIPAL, POOL);
+    f.mature();
+    f.authorize("release", &f.owner);
+    f.client().release(&f.id, &f.owner);
+    let before = f.balances();
+    f.authorize("settle_commitment", &f.owner);
+    assert_eq!(f.client().try_settle_commitment(&f.id, &f.owner), Err(Ok(Error::InvalidState)));
+    assert_eq!(f.balances(), before);
+    assert_eq!(f.commitment().status, EscrowStatus::Released);
+}
+
+#[test]
 fn settle_with_zero_yield_pays_principal() {
     let f = Fixture::new(1, 0);
     f.mature();
