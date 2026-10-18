@@ -8,6 +8,18 @@ const PRINCIPAL: i128 = 1_000_000;
 const POOL: i128 = 100_000;
 
 #[test]
+fn release_by_admin_pays_owner() {
+    let f = Fixture::new(PRINCIPAL, POOL);
+    f.mature();
+    let c = f.commitment();
+    let before = f.balances();
+    f.authorize("release", &f.admin);
+    let paid = f.client().release(&f.id, &f.admin);
+    assert_eq!(paid, c.amount + c.accrued_yield);
+    f.assert_paid(&before, paid, c.accrued_yield);
+}
+
+#[test]
 fn settle_pays_principal_plus_yield() {
     let f = Fixture::new(PRINCIPAL, POOL);
     f.mature();
