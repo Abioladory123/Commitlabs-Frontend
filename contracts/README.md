@@ -1,6 +1,6 @@
 # CommitLabs Soroban Contracts
 
-Soroban (Rust) smart-contract workspace backing the CommitLabs liquidity commitment protocol. The frontend and backend service layer interact with the escrow contract through Stellar Soroban RPC, so this document treats `contracts/escrow/src/lib.rs` as the source of truth and cross-checks behavior against `contracts/escrow/src/test.rs`.
+Soroban (Rust) smart-contract workspace backing the CommitLabs liquidity commitment protocol. The frontend and backend service layer interact with the escrow contract through Stellar Soroban RPC, so this document treats `contracts/escrow/src/lib.rs` as the source of truth and cross-checks behavior against the focused tests in `contracts/escrow/src/test_funding_window.rs`.
 
 ## Workspace Layout
 
@@ -11,7 +11,7 @@ contracts/
 |   |-- Cargo.toml                # commitlabs-escrow crate
 |   `-- src/
 |       |-- lib.rs                # EscrowContract implementation, types, errors
-|       `-- test.rs               # Contract unit tests and lifecycle examples
+|       `-- test_funding_window.rs # Funding-time maturity, expiry, and cancellation tests
 `-- scripts/
     |-- deploy-testnet.sh         # Build, deploy, initialize helper
     `-- deploy-testnet.smoke.mjs  # Dry-run smoke validation
@@ -38,24 +38,28 @@ The escrow contract manages a liquidity commitment from creation through funding
 
 ```text
 create_commitment/create_commitment_default
-  -> fund_escrow
+  -> fund_escrow (within 7 days; lock and yield period starts at funding)
     -> release OR settle_commitment
     -> refund OR early_exit_commitment OR refund_partial
     -> dispute -> resolve_dispute
     -> transfer_ownership -> later release/refund/dispute by the new owner
     -> record_attestation below threshold -> Violated -> resolve_dispute
+  -> cancel_commitment by owner, or permissionlessly after 7 days -> Cancelled
 ```
 
 ### State Machine
 
 | State      | Meaning                                                                                                          | Allowed next actions                                                                                                                       |
 | ---------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `Created`  | Commitment exists but funds have not been transferred into escrow.                                               | `fund_escrow`                                                                                                                              |
+| `Created`  | Commitment exists but funds have not been transferred into escrow; funding is allowed for 7 days after creation.   | `fund_escrow`, `cancel_commitment`                                                                                                         |
 | `Funded`   | Principal is locked and the commitment is active.                                                                | `release`, `settle_commitment`, `refund`, `early_exit_commitment`, `refund_partial`, `dispute`, `record_attestation`, `transfer_ownership` |
 | `Released` | Matured commitment paid principal plus accrued yield to the owner. Terminal.                                     | None                                                                                                                                       |
 | `Refunded` | Early exit/refund paid principal minus penalty, unless grace period waived it. Terminal.                         | None                                                                                                                                       |
 | `Disputed` | Owner or admin froze the funded commitment pending admin resolution.                                             | `resolve_dispute`                                                                                                                          |
 | `Violated` | `record_attestation` observed a score below `ViolationThreshold`; transfers are frozen pending admin resolution. | `resolve_dispute`                                                                                                                          |
+| `Cancelled` | Unfunded commitment was cancelled by its owner or after its funding window expired. Terminal.                    | None                                                                                                                                       |
+
+Creation records the selected lock length in the existing `maturity - created_at` fields. Funding must happen no later than `created_at + FUNDING_WINDOW_SECONDS` (7 days); at funding, maturity is reset to funding time plus that same lock length. This keeps the `Commitment` storage layout unchanged, so records written before this upgrade decode normally and retain their configured lock length. The early-exit grace period is measured against this funding-based maturity.
 
 ### Entrypoints
 
@@ -64,7 +68,8 @@ create_commitment/create_commitment_default
 | `initialize(admin, token, fee_recipient, safe_default_penalty_bps, balanced_default_penalty_bps, aggressive_default_penalty_bps)` | `admin` auth           | One-time setup. Stores admin, escrow token, fee recipient, default risk-profile penalties, `NextId`, and zero-second grace period.                                                                                                                                            |
 | `create_commitment(owner, asset, amount, risk, duration_days, penalty_bps, metadata)`                                             | `owner` auth           | Creates `Created` commitment after validating `amount`, `duration_days`, and `penalty_bps`; indexes it under the owner.                                                                                                                                                       |
 | `create_commitment_default` / `create_commitment_with_default`                                                                    | `owner` auth           | Same as `create_commitment`, but reads the default penalty for `risk`.                                                                                                                                                                                                        |
-| `fund_escrow(commitment_id)`                                                                                                      | Commitment owner auth  | Requires `Created`; transfers `amount` from owner to contract; moves to `Funded`.                                                                                                                                                                                             |
+| `fund_escrow(commitment_id)`                                                                                                      | Commitment owner auth  | Requires `Created` and funding within 7 days of creation; transfers `amount` from owner to contract, resets maturity to funding time plus the configured lock duration, and moves to `Funded`.                                                                                 |
+| `cancel_commitment(commitment_id, caller)`                                                                                        | Owner before expiry; permissionless after expiry | Requires `Created`; before expiry, `caller` must be the owner and authorize; after expiry, anyone may cancel. Marks `Cancelled` and removes the id from the owner's index without transferring tokens. |
 | `release(commitment_id)`                                                                                                          | No owner auth required | Requires `Funded` and ledger timestamp at or after maturity; pays principal plus accrued yield to owner; moves to `Released`.                                                                                                                                                 |
 | `settle_commitment(commitment_id, caller)`                                                                                        | `caller` auth          | ABI alias for matured release used by the backend. Returns `SettlementResult { settlementAmount, finalStatus }`.                                                                                                                                                              |
 | `refund(commitment_id)`                                                                                                           | Commitment owner auth  | Requires `Funded`; applies early-exit penalty unless inside `GracePeriodSeconds`; moves to `Refunded`.                                                                                                                                                                        |
@@ -133,6 +138,10 @@ The `Error` enum in `contracts/escrow/src/lib.rs` is `#[repr(u32)]`; these numer
 | 11   | `Paused`                | Write operation was attempted while contract writes are paused.             |
 
 Backend callers should use the normalized `BackendError` response shape and preserve method context in details. Contract errors that cannot be parsed should still be surfaced as `BLOCKCHAIN_CALL_FAILED` with the method name so API consumers can distinguish RPC/configuration failures from business-rule failures.
+
+`FundingWindowExpired` is error code `16`; it is returned without moving tokens when funding is attempted after the 7-day window. Codes 1-15 and their enum positions remain unchanged.
+
+Run the isolated funding-window tests with `cd contracts && cargo test -p commitlabs-escrow`.
 
 ## Deployment Flow
 
