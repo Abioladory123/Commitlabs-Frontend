@@ -8,6 +8,17 @@ const PRINCIPAL: i128 = 1_000_000;
 const POOL: i128 = 100_000;
 
 #[test]
+fn insufficient_yield_pool_is_atomic() {
+    let f = Fixture::new(PRINCIPAL, 1);
+    f.mature();
+    let before = f.balances();
+    f.authorize("release", &f.owner);
+    assert_eq!(f.client().try_release(&f.id, &f.owner), Err(Ok(Error::InsufficientYieldPool)));
+    assert_eq!(f.balances(), before);
+    assert_eq!(f.commitment().status, EscrowStatus::Funded);
+}
+
+#[test]
 fn double_release_is_invalid_state() {
     let f = Fixture::new(PRINCIPAL, POOL);
     f.mature();
