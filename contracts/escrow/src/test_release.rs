@@ -8,6 +8,17 @@ const PRINCIPAL: i128 = 1_000_000;
 const POOL: i128 = 100_000;
 
 #[test]
+fn release_before_maturity_not_matured() {
+    let f = Fixture::new(PRINCIPAL, POOL);
+    f.env.ledger().with_mut(|ledger| ledger.timestamp = f.commitment().maturity - 1);
+    let before = f.balances();
+    f.authorize("release", &f.owner);
+    assert_eq!(f.client().try_release(&f.id, &f.owner), Err(Ok(Error::NotMatured)));
+    assert_eq!(f.balances(), before);
+    assert_eq!(f.commitment().status, EscrowStatus::Funded);
+}
+
+#[test]
 fn insufficient_yield_pool_is_atomic() {
     let f = Fixture::new(PRINCIPAL, 1);
     f.mature();
