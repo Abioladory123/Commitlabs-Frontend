@@ -8,6 +8,16 @@ const PRINCIPAL: i128 = 1_000_000;
 const POOL: i128 = 100_000;
 
 #[test]
+fn release_requires_owner_auth() {
+    let f = Fixture::new(PRINCIPAL, POOL);
+    f.mature();
+    let before = f.balances();
+    assert!(matches!(f.client().try_release(&f.id, &f.owner), Err(Err(_))));
+    assert_eq!(f.balances(), before);
+    assert_eq!(f.commitment().status, EscrowStatus::Funded);
+}
+
+#[test]
 fn settle_after_release_is_invalid_state() {
     let f = Fixture::new(PRINCIPAL, POOL);
     f.mature();
