@@ -40,6 +40,10 @@ jobs:
         working-directory: contracts
         run: cargo check
 
+      - name: Test Escrow Contract
+        working-directory: contracts
+        run: cargo test -p commitlabs-escrow
+
       - name: Build Soroban Smart Contracts
         working-directory: contracts
         run: stellar contract build
