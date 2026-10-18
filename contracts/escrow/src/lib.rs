@@ -66,6 +66,14 @@ pub enum DataKey {
     FeeRecipient,
     /// On-chain yield pool balance used to pay matured release yield.
     YieldPool,
+    /// Sum of `accrued_yield` promised to funded commitments and therefore not
+    /// available for withdrawal. `YieldPool - ReservedYield` is the spendable
+    /// (available) balance.
+    ReservedYield,
+    /// Flag marking a commitment whose `accrued_yield` was reserved against the
+    /// pool at funding time. Commitments funded before reservation accounting
+    /// existed have no flag and are never un-reserved.
+    Reserved(u64),
     /// Contract pause flag used to halt write operations and for emergency halts.
     Paused,
     /// Historical attestation records keyed by commitment id.
@@ -199,6 +207,9 @@ pub enum Error {
     CommitmentViolated = 14,
     /// Provided wasm hash is invalid (e.g. zero hash).
     InvalidWasmHash = 15,
+    /// Yield reservation accounting invariant is broken (e.g. reserved balance
+    /// cannot cover a commitment that was funded with a reservation).
+    ReservedYieldInvariant = 16,
 }
 
 /// Result of an early exit commitment.
@@ -216,6 +227,19 @@ pub struct EarlyExitResult {
 pub struct SettlementResult {
     pub settlement_amount: i128,
     pub final_status: String,
+}
+
+/// Snapshot of yield-pool solvency.
+///
+/// `balance` is the total pool balance, `reserved` is the portion already
+/// promised to funded commitments, and `available = balance - reserved` is what
+/// the admin may withdraw or promise to new commitments.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct YieldPoolStatus {
+    pub balance: i128,
+    pub reserved: i128,
+    pub available: i128,
 }
 
 #[contracttype]
@@ -590,7 +614,15 @@ impl EscrowContract {
         if owner_balance < c.amount {
             return Err(Error::InsufficientBalance);
         }
+
+        // Enforce pool solvency when the yield promise is made, not when it is
+        // redeemed, so a funded commitment can always be released at maturity.
+        if Self::yield_pool_available(&env) < c.accrued_yield {
+            return Err(Error::InsufficientYieldPool);
+        }
+
         token.transfer(&c.owner, env.current_contract_address(), &c.amount);
+        Self::reserve_yield(&env, commitment_id, c.accrued_yield)?;
 
         c.status = EscrowStatus::Funded;
         Self::save(&env, &c);
@@ -621,11 +653,12 @@ impl EscrowContract {
         token.transfer(&admin, &contract, &amount);
 
         let balance = Self::yield_pool_balance(&env);
-        Self::set_yield_pool_balance(&env, balance + amount);
+        let new_balance = balance.checked_add(amount).ok_or(Error::InvalidAmount)?;
+        Self::set_yield_pool_balance(&env, new_balance);
 
         env.events().publish(
             (Symbol::new(&env, "deposit_yield_pool"), admin),
-            (amount, balance + amount),
+            (amount, new_balance),
         );
         Ok(())
     }
@@ -633,6 +666,55 @@ impl EscrowContract {
     /// Read the current yield pool balance.
     pub fn get_yield_pool_balance(env: Env) -> i128 {
         Self::yield_pool_balance(&env)
+    }
+
+    /// Read the pool balance, the reserved (promised) portion, and the
+    /// available portion an admin may withdraw or promise to new commitments.
+    pub fn get_yield_pool_status(env: Env) -> YieldPoolStatus {
+        let balance = Self::yield_pool_balance(&env);
+        let reserved = Self::reserved_yield(&env);
+        YieldPoolStatus {
+            balance,
+            reserved,
+            available: Self::yield_pool_available(&env),
+        }
+    }
+
+    /// Withdraw unallocated yield-pool surplus to `to`. Admin only.
+    ///
+    /// Only the available portion (`balance - reserved`) may be withdrawn, so
+    /// yield already promised to funded commitments can never be drained.
+    pub fn withdraw_yield_pool(env: Env, to: Address, amount: i128) -> Result<(), Error> {
+        Self::require_init(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
+        if amount <= 0 {
+            return Err(Error::InvalidAmount);
+        }
+
+        let available = Self::yield_pool_available(&env);
+        if amount > available {
+            return Err(Error::InsufficientYieldPool);
+        }
+
+        let balance = Self::yield_pool_balance(&env);
+        let new_balance = balance.checked_sub(amount).ok_or(Error::InvalidAmount)?;
+        Self::set_yield_pool_balance(&env, new_balance);
+
+        let token = Self::token_client(&env);
+        let contract = env.current_contract_address();
+        token.transfer(&contract, &to, &amount);
+
+        env.events().publish(
+            (Symbol::new(&env, "withdraw_yield_pool"), admin),
+            (to, amount),
+        );
+        Ok(())
     }
 
     fn perform_release(env: &Env, commitment_id: u64, caller: &Address) -> Result<i128, Error> {
@@ -649,15 +731,13 @@ impl EscrowContract {
             return Err(Error::NotMatured);
         }
 
-        let yield_pool = Self::yield_pool_balance(env);
-        if yield_pool < c.accrued_yield {
-            return Err(Error::InsufficientYieldPool);
-        }
-
         let total_payout = c.amount + c.accrued_yield;
 
-        // Effects: update yield pool balance and mark commitment as released before external token transfer.
-        Self::set_yield_pool_balance(env, yield_pool - c.accrued_yield);
+        // Effects: consume the reservation (decrementing both the pool and the
+        // reserved total) and mark the commitment as released before the token
+        // transfer. The yield was reserved at funding time, so this cannot fail
+        // for pool solvency reasons; the checked path only guards invariants.
+        Self::consume_reserved_yield(env, commitment_id, c.accrued_yield)?;
         c.status = EscrowStatus::Released;
         Self::save(env, &c);
 
@@ -740,6 +820,10 @@ impl EscrowContract {
         c.amount = remaining;
         if remaining == 0 {
             c.status = EscrowStatus::Refunded;
+            // The reservation covers the whole original principal; a partial
+            // refund keeps it in place and it is released only on full exit, so
+            // the pool stays solvent (over-reserved, never under-reserved).
+            Self::release_reservation(&env, commitment_id, c.accrued_yield)?;
         }
 
         Self::save(&env, &c);
@@ -865,12 +949,13 @@ impl EscrowContract {
         if release_to_owner {
             let mut payout = c.amount;
             if env.ledger().timestamp() >= c.maturity {
-                let yield_pool = Self::yield_pool_balance(&env);
-                if yield_pool < c.accrued_yield {
-                    return Err(Error::InsufficientYieldPool);
-                }
+                // Consume the reservation; both pool and reserved decrease.
+                Self::consume_reserved_yield(&env, commitment_id, c.accrued_yield)?;
                 payout += c.accrued_yield;
-                Self::set_yield_pool_balance(&env, yield_pool - c.accrued_yield);
+            } else {
+                // Pre-maturity release forfeits yield: drop the reservation and
+                // leave the pool balance untouched.
+                Self::release_reservation(&env, commitment_id, c.accrued_yield)?;
             }
             c.status = EscrowStatus::Released;
             paid = payout;
@@ -878,6 +963,9 @@ impl EscrowContract {
             let (penalty, refund_amount) = Self::compute_refund_amount(c.amount, c.penalty_bps)?;
             c.status = EscrowStatus::Refunded;
             paid = refund_amount;
+
+            // Refund branch forfeits yield: drop the reservation.
+            Self::release_reservation(&env, commitment_id, c.accrued_yield)?;
 
             let fee_recipient: Address = env
                 .storage()
@@ -1159,6 +1247,10 @@ impl EscrowContract {
         };
         let refund_amount = c.amount.checked_sub(penalty).ok_or(Error::InvalidAmount)?;
 
+        // Early exit forfeits yield: drop the reservation but keep the pool
+        // balance untouched.
+        Self::release_reservation(env, c.id, c.accrued_yield)?;
+
         let token = Self::token_client(env);
         let contract = env.current_contract_address();
         if penalty > 0 {
@@ -1410,6 +1502,95 @@ impl EscrowContract {
         env.storage().instance().set(&DataKey::YieldPool, &amount);
     }
 
+    fn reserved_yield(env: &Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::ReservedYield)
+            .unwrap_or(0)
+    }
+
+    fn set_reserved_yield(env: &Env, amount: i128) {
+        env.storage()
+            .instance()
+            .set(&DataKey::ReservedYield, &amount);
+    }
+
+    /// Yield pool balance that is not already promised to a funded commitment.
+    fn yield_pool_available(env: &Env) -> i128 {
+        Self::yield_pool_balance(env)
+            .checked_sub(Self::reserved_yield(env))
+            .unwrap_or(0)
+    }
+
+    fn is_yield_reserved(env: &Env, commitment_id: u64) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Reserved(commitment_id))
+            .unwrap_or(false)
+    }
+
+    fn clear_yield_reserved(env: &Env, commitment_id: u64) {
+        env.storage()
+            .instance()
+            .remove(&DataKey::Reserved(commitment_id));
+    }
+
+    /// Promise `amount` of yield to a commitment, marking the commitment as
+    /// reserved. Overflow surfaces as `InvalidAmount` instead of panicking.
+    fn reserve_yield(env: &Env, commitment_id: u64, amount: i128) -> Result<(), Error> {
+        let reserved = Self::reserved_yield(env)
+            .checked_add(amount)
+            .ok_or(Error::InvalidAmount)?;
+        Self::set_reserved_yield(env, reserved);
+        env.storage()
+            .instance()
+            .set(&DataKey::Reserved(commitment_id), &true);
+        Ok(())
+    }
+
+    /// Pay a matured commitment's yield from the pool, decrementing both the
+    /// pool balance and the reserved total. Commitments funded before
+    /// reservation accounting existed fall back to the previous behaviour of
+    /// paying straight out of the pool.
+    fn consume_reserved_yield(env: &Env, commitment_id: u64, amount: i128) -> Result<(), Error> {
+        let pool = Self::yield_pool_balance(env);
+
+        if !Self::is_yield_reserved(env, commitment_id) {
+            if pool < amount {
+                return Err(Error::InsufficientYieldPool);
+            }
+            Self::set_yield_pool_balance(env, pool - amount);
+            return Ok(());
+        }
+
+        let reserved = Self::reserved_yield(env);
+        if reserved < amount || pool < amount {
+            return Err(Error::ReservedYieldInvariant);
+        }
+
+        Self::set_reserved_yield(env, reserved - amount);
+        Self::set_yield_pool_balance(env, pool - amount);
+        Self::clear_yield_reserved(env, commitment_id);
+        Ok(())
+    }
+
+    /// Drop a commitment's reservation without touching the pool balance. Used
+    /// on any exit that forfeits yield. No-op for commitments that were never
+    /// reserved (funded before reservation accounting existed).
+    fn release_reservation(env: &Env, commitment_id: u64, amount: i128) -> Result<(), Error> {
+        if !Self::is_yield_reserved(env, commitment_id) {
+            return Ok(());
+        }
+
+        let reserved = Self::reserved_yield(env);
+        let next = reserved
+            .checked_sub(amount)
+            .ok_or(Error::ReservedYieldInvariant)?;
+        Self::set_reserved_yield(env, next);
+        Self::clear_yield_reserved(env, commitment_id);
+        Ok(())
+    }
+
     fn token_client(env: &Env) -> soroban_sdk::token::Client<'_> {
         let token: Address = env
             .storage()
@@ -1425,3 +1606,5 @@ impl EscrowContract {
     }
 }
 
+#[cfg(test)]
+mod test_yield_reserve;
