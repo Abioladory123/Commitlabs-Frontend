@@ -639,6 +639,15 @@ impl EscrowContract {
         caller.require_auth();
         let mut c = Self::load(env, commitment_id)?;
 
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        if caller != &c.owner && caller != &admin {
+            return Err(Error::Unauthorized);
+        }
+
         if c.status == EscrowStatus::Violated {
             return Err(Error::CommitmentViolated);
         }
