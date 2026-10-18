@@ -17,6 +17,21 @@ contracts/
     `-- deploy-testnet.smoke.mjs  # Dry-run smoke validation
 ```
 
+## Testnet Deployment
+
+The escrow contract is deployed on Stellar **testnet**: [`CBPNVNWDFZOUNB6REHBPGU2DRP4AJSVS7QJ3SEOUIDBTW6DZEHQKJ5E4`](https://stellar.expert/explorer/testnet/contract/CBPNVNWDFZOUNB6REHBPGU2DRP4AJSVS7QJ3SEOUIDBTW6DZEHQKJ5E4) (see [DEPLOYMENTS.md](../DEPLOYMENTS.md)).
+
+Build and invoke:
+
+```bash
+cd contracts && stellar contract build
+stellar contract invoke --id CBPNVNWDFZOUNB6REHBPGU2DRP4AJSVS7QJ3SEOUIDBTW6DZEHQKJ5E4 --source-account <KEY> --network testnet -- get_default_penalty --risk Balanced
+stellar contract invoke --id CBPNVNWDFZOUNB6REHBPGU2DRP4AJSVS7QJ3SEOUIDBTW6DZEHQKJ5E4 --source-account <KEY> --network testnet -- create_commitment --owner <ADDR> --asset CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC --amount 10000000 --risk Balanced --duration_days 30 --penalty_bps 500 --metadata '{"name":"demo"}'
+stellar contract invoke --id CBPNVNWDFZOUNB6REHBPGU2DRP4AJSVS7QJ3SEOUIDBTW6DZEHQKJ5E4 --source-account <KEY> --network testnet -- fund_escrow --commitment_id 0
+```
+
+Note: commitment ids start at 0. The function reference is the Entrypoints table above, which matches the contract's public functions in `escrow/src/lib.rs`.
+
 ## Escrow Lifecycle
 
 The escrow contract manages a liquidity commitment from creation through funding, settlement, early exit, dispute handling, ownership transfer, or compliance violation freeze.
