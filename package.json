@@ -3,13 +3,18 @@
   "version": "0.2.0",
   "private": true,
   "description": "CommitLabs - liquidity as a commitment on Stellar Soroban",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "analyze": "cross-env ANALYZE=true next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "circular": "madge --circular --extensions ts,tsx src"
+    "circular": "madge --circular --extensions ts,tsx src",
+    "size": "node scripts/check-bundle-budget.mjs",
+    "test:size": "node --test scripts/check-bundle-budget.test.mjs"
   },
   "dependencies": {
     "@stellar/freighter-api": "^1.7.1",
@@ -18,9 +23,12 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@lhci/cli": "^0.15.1",
+    "@next/bundle-analyzer": "^14.2.35",
     "@types/node": "^20.19.33",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
+    "cross-env": "^10.1.0",
     "madge": "^8.0.0",
     "typescript": "^5.6.3"
   }
