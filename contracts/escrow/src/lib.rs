@@ -673,6 +673,8 @@ impl EscrowContract {
         c.status = EscrowStatus::Released;
         Self::save(env, &c);
 
+        Self::token_client(env).transfer(&env.current_contract_address(), &c.owner, &total_payout);
+
         Ok(total_payout)
     }
 
