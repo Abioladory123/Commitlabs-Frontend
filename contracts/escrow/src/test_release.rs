@@ -8,6 +8,18 @@ const PRINCIPAL: i128 = 1_000_000;
 const POOL: i128 = 100_000;
 
 #[test]
+fn settle_by_stranger_is_unauthorized() {
+    let f = Fixture::new(PRINCIPAL, POOL);
+    f.mature();
+    let stranger = Address::generate(&f.env);
+    let before = f.balances();
+    f.authorize("settle_commitment", &stranger);
+    assert_eq!(f.client().try_settle_commitment(&f.id, &stranger), Err(Ok(Error::Unauthorized)));
+    assert_eq!(f.balances(), before);
+    assert_eq!(f.commitment().status, EscrowStatus::Funded);
+}
+
+#[test]
 fn settle_by_admin_pays_owner() {
     let f = Fixture::new(PRINCIPAL, POOL);
     f.mature();
