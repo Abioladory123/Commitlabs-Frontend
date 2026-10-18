@@ -8,6 +8,18 @@ const PRINCIPAL: i128 = 1_000_000;
 const POOL: i128 = 100_000;
 
 #[test]
+fn settle_with_zero_yield_pays_principal() {
+    let f = Fixture::new(1, 0);
+    f.mature();
+    assert_eq!(f.commitment().accrued_yield, 0);
+    let before = f.balances();
+    f.authorize("settle_commitment", &f.owner);
+    let result = f.client().settle_commitment(&f.id, &f.owner);
+    assert_eq!(result.settlement_amount, 1);
+    f.assert_paid(&before, result.settlement_amount, 0);
+}
+
+#[test]
 fn release_with_zero_yield_pays_principal() {
     let f = Fixture::new(1, 0);
     f.mature();
