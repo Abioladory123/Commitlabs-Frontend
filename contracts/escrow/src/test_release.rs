@@ -8,12 +8,70 @@ const PRINCIPAL: i128 = 1_000_000;
 const POOL: i128 = 100_000;
 
 #[test]
+fn release_pays_current_owner_after_transfer() {
+    let mut f = Fixture::new(PRINCIPAL, POOL);
+    let old_owner = f.owner.clone();
+    let new_owner = Address::generate(&f.env);
+    f.env.mock_auths(&[MockAuth {
+        address: &old_owner,
+        invoke: &MockAuthInvoke {
+            contract: &f.contract,
+            fn_name: "transfer_ownership",
+            args: (f.id, new_owner.clone()).into_val(&f.env),
+            sub_invokes: &[],
+        },
+    }]);
+    f.client().transfer_ownership(&f.id, &new_owner);
+    f.owner = new_owner;
+    f.mature();
+    let c = f.commitment();
+    let before = f.balances();
+    f.authorize("release", &old_owner);
+    assert_eq!(
+        f.client().try_release(&f.id, &old_owner),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(f.balances(), before);
+    f.authorize("release", &f.admin);
+    let paid = f.client().release(&f.id, &f.admin);
+    assert_eq!(paid, c.amount + c.accrued_yield);
+    f.assert_paid(&before, paid, c.accrued_yield);
+    assert_eq!(token::Client::new(&f.env, &f.token).balance(&old_owner), 0);
+}
+
+#[test]
+fn frozen_commitments_cannot_be_released_or_settled() {
+    for (status, error) in [
+        (EscrowStatus::Disputed, Error::InvalidState),
+        (EscrowStatus::Violated, Error::CommitmentViolated),
+        (EscrowStatus::Created, Error::InvalidState),
+        (EscrowStatus::Refunded, Error::InvalidState),
+    ] {
+        let f = Fixture::new(PRINCIPAL, POOL);
+        f.mature();
+        let mut c = f.commitment();
+        c.status = status;
+        f.set_commitment(&c);
+        let before = f.balances();
+        f.authorize("release", &f.owner);
+        assert_eq!(f.client().try_release(&f.id, &f.owner), Err(Ok(error)));
+        f.authorize("settle_commitment", &f.admin);
+        assert_eq!(
+            f.client().try_settle_commitment(&f.id, &f.admin),
+            Err(Ok(error))
+        );
+        assert_eq!(f.balances(), before);
+        assert_eq!(f.commitment().status, status);
+    }
+}
+
+#[test]
 fn failed_token_transfer_rolls_back_release() {
     let f = Fixture::new(PRINCIPAL, POOL);
     f.mature();
     // Burn escrow liquidity while retaining its accounting to force the SAC transfer to fail.
     f.env.mock_all_auths();
-    token::StellarAssetClient::new(&f.env, &f.token).clawback(&f.contract, &PRINCIPAL);
+    token::Client::new(&f.env, &f.token).burn(&f.contract, &PRINCIPAL);
     f.env.mock_auths(&[]);
     let before = f.balances();
     f.authorize("release", &f.owner);
@@ -31,7 +89,10 @@ fn release_overflow_is_invalid_amount() {
     f.set_commitment(&c);
     let before = f.balances();
     f.authorize("release", &f.owner);
-    assert_eq!(f.client().try_release(&f.id, &f.owner), Err(Ok(Error::InvalidAmount)));
+    assert_eq!(
+        f.client().try_release(&f.id, &f.owner),
+        Err(Ok(Error::InvalidAmount))
+    );
     assert_eq!(f.balances(), before);
     assert_eq!(f.commitment().status, EscrowStatus::Funded);
 }
@@ -41,7 +102,10 @@ fn settle_requires_admin_auth() {
     let f = Fixture::new(PRINCIPAL, POOL);
     f.mature();
     let before = f.balances();
-    assert!(matches!(f.client().try_settle_commitment(&f.id, &f.admin), Err(Err(_))));
+    assert!(matches!(
+        f.client().try_settle_commitment(&f.id, &f.admin),
+        Err(Err(_))
+    ));
     assert_eq!(f.balances(), before);
     assert_eq!(f.commitment().status, EscrowStatus::Funded);
 }
@@ -51,7 +115,10 @@ fn release_requires_owner_auth() {
     let f = Fixture::new(PRINCIPAL, POOL);
     f.mature();
     let before = f.balances();
-    assert!(matches!(f.client().try_release(&f.id, &f.owner), Err(Err(_))));
+    assert!(matches!(
+        f.client().try_release(&f.id, &f.owner),
+        Err(Err(_))
+    ));
     assert_eq!(f.balances(), before);
     assert_eq!(f.commitment().status, EscrowStatus::Funded);
 }
@@ -64,7 +131,10 @@ fn settle_after_release_is_invalid_state() {
     f.client().release(&f.id, &f.owner);
     let before = f.balances();
     f.authorize("settle_commitment", &f.owner);
-    assert_eq!(f.client().try_settle_commitment(&f.id, &f.owner), Err(Ok(Error::InvalidState)));
+    assert_eq!(
+        f.client().try_settle_commitment(&f.id, &f.owner),
+        Err(Ok(Error::InvalidState))
+    );
     assert_eq!(f.balances(), before);
     assert_eq!(f.commitment().status, EscrowStatus::Released);
 }
@@ -99,7 +169,10 @@ fn settle_with_insufficient_pool_is_atomic() {
     f.mature();
     let before = f.balances();
     f.authorize("settle_commitment", &f.owner);
-    assert_eq!(f.client().try_settle_commitment(&f.id, &f.owner), Err(Ok(Error::InsufficientYieldPool)));
+    assert_eq!(
+        f.client().try_settle_commitment(&f.id, &f.owner),
+        Err(Ok(Error::InsufficientYieldPool))
+    );
     assert_eq!(f.balances(), before);
     assert_eq!(f.commitment().status, EscrowStatus::Funded);
 }
@@ -111,7 +184,10 @@ fn settle_by_stranger_is_unauthorized() {
     let stranger = Address::generate(&f.env);
     let before = f.balances();
     f.authorize("settle_commitment", &stranger);
-    assert_eq!(f.client().try_settle_commitment(&f.id, &stranger), Err(Ok(Error::Unauthorized)));
+    assert_eq!(
+        f.client().try_settle_commitment(&f.id, &stranger),
+        Err(Ok(Error::Unauthorized))
+    );
     assert_eq!(f.balances(), before);
     assert_eq!(f.commitment().status, EscrowStatus::Funded);
 }
@@ -131,10 +207,16 @@ fn settle_by_admin_pays_owner() {
 #[test]
 fn release_before_maturity_not_matured() {
     let f = Fixture::new(PRINCIPAL, POOL);
-    f.env.ledger().with_mut(|ledger| ledger.timestamp = f.commitment().maturity - 1);
+    let before_maturity = f.commitment().maturity - 1;
+    f.env
+        .ledger()
+        .with_mut(|ledger| ledger.timestamp = before_maturity);
     let before = f.balances();
     f.authorize("release", &f.owner);
-    assert_eq!(f.client().try_release(&f.id, &f.owner), Err(Ok(Error::NotMatured)));
+    assert_eq!(
+        f.client().try_release(&f.id, &f.owner),
+        Err(Ok(Error::NotMatured))
+    );
     assert_eq!(f.balances(), before);
     assert_eq!(f.commitment().status, EscrowStatus::Funded);
 }
@@ -145,7 +227,10 @@ fn insufficient_yield_pool_is_atomic() {
     f.mature();
     let before = f.balances();
     f.authorize("release", &f.owner);
-    assert_eq!(f.client().try_release(&f.id, &f.owner), Err(Ok(Error::InsufficientYieldPool)));
+    assert_eq!(
+        f.client().try_release(&f.id, &f.owner),
+        Err(Ok(Error::InsufficientYieldPool))
+    );
     assert_eq!(f.balances(), before);
     assert_eq!(f.commitment().status, EscrowStatus::Funded);
 }
@@ -158,7 +243,10 @@ fn double_release_is_invalid_state() {
     f.client().release(&f.id, &f.owner);
     let before = f.balances();
     f.authorize("release", &f.owner);
-    assert_eq!(f.client().try_release(&f.id, &f.owner), Err(Ok(Error::InvalidState)));
+    assert_eq!(
+        f.client().try_release(&f.id, &f.owner),
+        Err(Ok(Error::InvalidState))
+    );
     assert_eq!(f.balances(), before);
     assert_eq!(f.commitment().status, EscrowStatus::Released);
 }
@@ -170,7 +258,10 @@ fn release_by_stranger_is_unauthorized() {
     let stranger = Address::generate(&f.env);
     let before = f.balances();
     f.authorize("release", &stranger);
-    assert_eq!(f.client().try_release(&f.id, &stranger), Err(Ok(Error::Unauthorized)));
+    assert_eq!(
+        f.client().try_release(&f.id, &stranger),
+        Err(Ok(Error::Unauthorized))
+    );
     assert_eq!(f.balances(), before);
     assert_eq!(token::Client::new(&f.env, &f.token).balance(&stranger), 0);
     assert_eq!(f.commitment().status, EscrowStatus::Funded);
@@ -234,8 +325,8 @@ struct Balances {
 
 impl Fixture {
     fn new(amount: i128, pool: i128) -> Self {
-        let env = Env::default();
-        env.set_config(soroban_sdk::EnvTestConfig {
+        let mut env = Env::default();
+        env.set_config(soroban_sdk::testutils::EnvTestConfig {
             capture_snapshot_at_drop: false,
         });
         // Setup is independent of settlement authorization, which uses exact mocks below.
@@ -244,7 +335,9 @@ impl Fixture {
         let admin = Address::generate(&env);
         let owner = Address::generate(&env);
         let fee = Address::generate(&env);
-        let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+        let token = env
+            .register_stellar_asset_contract_v2(admin.clone())
+            .address();
         let contract = env.register(EscrowContract, ());
         let client = EscrowContractClient::new(&env, &contract);
         client.initialize(&admin, &token, &fee, &200, &300, &500);
@@ -252,17 +345,38 @@ impl Fixture {
         sac.mint(&owner, &amount);
         sac.mint(&admin, &(POOL * 2));
         let id = client.create_commitment(
-            &owner, &token, &amount, &RiskProfile::Balanced, &30, &300, &Map::new(&env),
+            &owner,
+            &token,
+            &amount,
+            &RiskProfile::Balanced,
+            &30,
+            &300,
+            &Map::new(&env),
         );
         client.fund_escrow(&id);
         if pool > 0 {
             client.deposit_yield_pool(&admin, &pool);
         }
         env.mock_auths(&[]);
-        let fixture = Self { env, contract, token, owner, admin, fee, id };
-        assert_eq!(fixture.balances(), Balances {
-            owner: 0, contract: amount + pool, admin: POOL * 2 - pool, fee: 0, pool,
-        });
+        let fixture = Self {
+            env,
+            contract,
+            token,
+            owner,
+            admin,
+            fee,
+            id,
+        };
+        assert_eq!(
+            fixture.balances(),
+            Balances {
+                owner: 0,
+                contract: amount + pool,
+                admin: POOL * 2 - pool,
+                fee: 0,
+                pool,
+            }
+        );
         fixture
     }
 
@@ -275,7 +389,10 @@ impl Fixture {
     }
 
     fn mature(&self) {
-        self.env.ledger().with_mut(|ledger| ledger.timestamp = self.commitment().maturity);
+        let maturity = self.commitment().maturity;
+        self.env
+            .ledger()
+            .with_mut(|ledger| ledger.timestamp = maturity);
     }
 
     fn authorize(&self, method: &str, caller: &Address) {
@@ -293,7 +410,11 @@ impl Fixture {
     fn balances(&self) -> Balances {
         let token = token::Client::new(&self.env, &self.token);
         let pool = self.env.as_contract(&self.contract, || {
-            self.env.storage().instance().get(&DataKey::YieldPool).unwrap_or(0)
+            self.env
+                .storage()
+                .instance()
+                .get(&DataKey::YieldPool)
+                .unwrap_or(0)
         });
         assert_eq!(pool, self.client().get_yield_pool_balance());
         Balances {
@@ -306,20 +427,26 @@ impl Fixture {
     }
 
     fn assert_paid(&self, before: &Balances, payout: i128, yield_amount: i128) {
-        assert_eq!(self.balances(), Balances {
-            owner: before.owner + payout,
-            contract: before.contract - payout,
-            admin: before.admin,
-            fee: before.fee,
-            pool: before.pool - yield_amount,
-        });
+        assert_eq!(
+            self.balances(),
+            Balances {
+                owner: before.owner + payout,
+                contract: before.contract - payout,
+                admin: before.admin,
+                fee: before.fee,
+                pool: before.pool - yield_amount,
+            }
+        );
         assert_eq!(self.commitment().status, EscrowStatus::Released);
     }
 
     fn set_commitment(&self, commitment: &Commitment) {
         // Inject otherwise unreachable arithmetic/state edges without changing production APIs.
         self.env.as_contract(&self.contract, || {
-            self.env.storage().persistent().set(&DataKey::Commitment(self.id), commitment);
+            self.env
+                .storage()
+                .persistent()
+                .set(&DataKey::Commitment(self.id), commitment);
         });
     }
 }
