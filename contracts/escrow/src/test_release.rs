@@ -8,6 +8,21 @@ const PRINCIPAL: i128 = 1_000_000;
 const POOL: i128 = 100_000;
 
 #[test]
+fn failed_token_transfer_rolls_back_release() {
+    let f = Fixture::new(PRINCIPAL, POOL);
+    f.mature();
+    // Burn escrow liquidity while retaining its accounting to force the SAC transfer to fail.
+    f.env.mock_all_auths();
+    token::StellarAssetClient::new(&f.env, &f.token).clawback(&f.contract, &PRINCIPAL);
+    f.env.mock_auths(&[]);
+    let before = f.balances();
+    f.authorize("release", &f.owner);
+    assert!(f.client().try_release(&f.id, &f.owner).is_err());
+    assert_eq!(f.balances(), before);
+    assert_eq!(f.commitment().status, EscrowStatus::Funded);
+}
+
+#[test]
 fn release_overflow_is_invalid_amount() {
     let f = Fixture::new(PRINCIPAL, POOL);
     f.mature();
