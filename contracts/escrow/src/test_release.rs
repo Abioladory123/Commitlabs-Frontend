@@ -8,6 +8,17 @@ const PRINCIPAL: i128 = 1_000_000;
 const POOL: i128 = 100_000;
 
 #[test]
+fn settle_with_insufficient_pool_is_atomic() {
+    let f = Fixture::new(PRINCIPAL, 1);
+    f.mature();
+    let before = f.balances();
+    f.authorize("settle_commitment", &f.owner);
+    assert_eq!(f.client().try_settle_commitment(&f.id, &f.owner), Err(Ok(Error::InsufficientYieldPool)));
+    assert_eq!(f.balances(), before);
+    assert_eq!(f.commitment().status, EscrowStatus::Funded);
+}
+
+#[test]
 fn settle_by_stranger_is_unauthorized() {
     let f = Fixture::new(PRINCIPAL, POOL);
     f.mature();
