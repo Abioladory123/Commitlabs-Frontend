@@ -8,6 +8,19 @@ const PRINCIPAL: i128 = 1_000_000;
 const POOL: i128 = 100_000;
 
 #[test]
+fn settle_pays_principal_plus_yield() {
+    let f = Fixture::new(PRINCIPAL, POOL);
+    f.mature();
+    let c = f.commitment();
+    let before = f.balances();
+    f.authorize("settle_commitment", &f.owner);
+    let result = f.client().settle_commitment(&f.id, &f.owner);
+    assert_eq!(result.settlement_amount, c.amount + c.accrued_yield);
+    assert_eq!(result.final_status, String::from_str(&f.env, "SETTLED"));
+    f.assert_paid(&before, result.settlement_amount, c.accrued_yield);
+}
+
+#[test]
 fn release_pays_principal_plus_yield() {
     let f = Fixture::new(PRINCIPAL, POOL);
     f.mature();
