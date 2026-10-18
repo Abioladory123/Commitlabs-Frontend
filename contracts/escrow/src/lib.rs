@@ -16,6 +16,9 @@
 //! (`src/lib/backend/services/contracts.ts`) expects to call: `create_commitment`,
 //! `fund_escrow`, `release`, `refund`, and `dispute`.
 
+#[cfg(test)]
+mod test_release;
+
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, Address, BytesN, Env, Map, String, Symbol,
     Vec,
