@@ -8,6 +8,20 @@ const PRINCIPAL: i128 = 1_000_000;
 const POOL: i128 = 100_000;
 
 #[test]
+fn release_overflow_is_invalid_amount() {
+    let f = Fixture::new(PRINCIPAL, POOL);
+    f.mature();
+    let mut c = f.commitment();
+    c.amount = i128::MAX;
+    f.set_commitment(&c);
+    let before = f.balances();
+    f.authorize("release", &f.owner);
+    assert_eq!(f.client().try_release(&f.id, &f.owner), Err(Ok(Error::InvalidAmount)));
+    assert_eq!(f.balances(), before);
+    assert_eq!(f.commitment().status, EscrowStatus::Funded);
+}
+
+#[test]
 fn settle_requires_admin_auth() {
     let f = Fixture::new(PRINCIPAL, POOL);
     f.mature();
