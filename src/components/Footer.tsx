@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { REPO_URL } from '@/lib/config';
+import { LIVE_URL, REPO_URL } from '@/lib/config';
 
 export function Footer() {
   return (
@@ -8,6 +8,9 @@ export function Footer() {
         <span>CommitLabs &middot; Liquidity as a commitment on Stellar Soroban</span>
         <span className="footer-links">
           <Link href="/docs">Docs</Link>
+          <a href={LIVE_URL} target="_blank" rel="noreferrer">
+            Live demo
+          </a>
           <a href={REPO_URL} target="_blank" rel="noreferrer">
             GitHub
           </a>

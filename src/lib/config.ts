@@ -10,3 +10,4 @@ export const REPO_URL = 'https://github.com/Commitlabs-Org/Commitlabs-Frontend';
 export function explorerContractUrl(id: string): string {
   return `https://stellar.expert/explorer/testnet/contract/${id}`;
 }
+export const LIVE_URL = 'https://commitlabs-frontend-pi.vercel.app';

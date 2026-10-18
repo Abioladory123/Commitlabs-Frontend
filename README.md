@@ -1,6 +1,6 @@
 # CommitLabs
 
-[![Live demo](https://img.shields.io/badge/live-demo-5eead4)](https://commitlabs-frontend-ruby.vercel.app)
+[![Live demo](https://img.shields.io/badge/live-demo-5eead4)](https://commitlabs-frontend-pi.vercel.app)
 ![Stellar testnet](https://img.shields.io/badge/network-stellar%20testnet-818cf8)
 ![Next.js 14](https://img.shields.io/badge/Next.js-14-black)
 
@@ -8,7 +8,7 @@
 commitments on Stellar Soroban. Pick a risk profile, set amount, lock duration, loss tolerance and early-exit
 penalty, and track the commitment from creation to settlement.
 
-**Live demo: https://commitlabs-frontend-ruby.vercel.app**
+**Live demo: https://commitlabs-frontend-pi.vercel.app**
 
 ## Features
 
