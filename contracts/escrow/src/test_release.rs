@@ -8,6 +8,18 @@ const PRINCIPAL: i128 = 1_000_000;
 const POOL: i128 = 100_000;
 
 #[test]
+fn settle_by_admin_pays_owner() {
+    let f = Fixture::new(PRINCIPAL, POOL);
+    f.mature();
+    let c = f.commitment();
+    let before = f.balances();
+    f.authorize("settle_commitment", &f.admin);
+    let result = f.client().settle_commitment(&f.id, &f.admin);
+    assert_eq!(result.settlement_amount, c.amount + c.accrued_yield);
+    f.assert_paid(&before, result.settlement_amount, c.accrued_yield);
+}
+
+#[test]
 fn release_before_maturity_not_matured() {
     let f = Fixture::new(PRINCIPAL, POOL);
     f.env.ledger().with_mut(|ledger| ledger.timestamp = f.commitment().maturity - 1);
