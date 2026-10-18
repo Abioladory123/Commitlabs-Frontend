@@ -663,7 +663,10 @@ impl EscrowContract {
             return Err(Error::InsufficientYieldPool);
         }
 
-        let total_payout = c.amount + c.accrued_yield;
+        let total_payout = c
+            .amount
+            .checked_add(c.accrued_yield)
+            .ok_or(Error::InvalidAmount)?;
 
         // Effects: update yield pool balance and mark commitment as released before external token transfer.
         Self::set_yield_pool_balance(env, yield_pool - c.accrued_yield);
