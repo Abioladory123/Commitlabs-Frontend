@@ -8,6 +8,16 @@ const PRINCIPAL: i128 = 1_000_000;
 const POOL: i128 = 100_000;
 
 #[test]
+fn settle_requires_admin_auth() {
+    let f = Fixture::new(PRINCIPAL, POOL);
+    f.mature();
+    let before = f.balances();
+    assert!(matches!(f.client().try_settle_commitment(&f.id, &f.admin), Err(Err(_))));
+    assert_eq!(f.balances(), before);
+    assert_eq!(f.commitment().status, EscrowStatus::Funded);
+}
+
+#[test]
 fn release_requires_owner_auth() {
     let f = Fixture::new(PRINCIPAL, POOL);
     f.mature();
