@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   effectiveStatus,
   fmt,
@@ -15,20 +15,64 @@ import {
 } from '@/lib/commitments';
 import { useWallet } from '@/components/WalletProvider';
 import { fetchXlmBalance } from '@/lib/wallet';
+import { InlineError } from '@/components/InlineError';
+import { Skeleton } from '@/components/Skeleton';
+import DashboardLoading from './loading';
+
+type BalanceState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'success'; balance: string }
+  | { status: 'unfunded'; friendbotUrl: string }
+  | { status: 'error'; message: string };
 
 export default function DashboardPage() {
   const { status, address } = useWallet();
   const [list, setList] = useState<Commitment[] | null>(null);
-  const [balance, setBalance] = useState<string | null>(null);
+  const [balanceState, setBalanceState] = useState<BalanceState>({ status: 'idle' });
 
   useEffect(() => {
     setList(loadCommitments());
   }, []);
 
+  const loadBalance = useCallback((addr: string, signal?: AbortSignal) => {
+    setBalanceState({ status: 'loading' });
+    fetchXlmBalance(addr, { signal })
+      .then((res) => {
+        if (signal?.aborted) return;
+        if (res.status === 'success') {
+          setBalanceState({ status: 'success', balance: res.balance });
+        } else if (res.status === 'unfunded') {
+          setBalanceState({ status: 'unfunded', friendbotUrl: res.friendbotUrl });
+        } else {
+          setBalanceState({ status: 'error', message: res.message });
+        }
+      })
+      .catch((_err) => {
+        if (signal?.aborted) return;
+        setBalanceState({ status: 'error', message: "Couldn't load balance" });
+      });
+  }, []);
+
   useEffect(() => {
-    setBalance(null);
-    if (address) fetchXlmBalance(address).then(setBalance);
-  }, [address]);
+    if (!address || status !== 'connected') {
+      setBalanceState({ status: 'idle' });
+      return;
+    }
+
+    const controller = new AbortController();
+    loadBalance(address, controller.signal);
+
+    return () => {
+      controller.abort();
+    };
+  }, [address, status, loadBalance]);
+
+  const handleRetryBalance = () => {
+    if (address) {
+      loadBalance(address);
+    }
+  };
 
   function update(id: string, patch: Partial<Commitment>) {
     setList((prev) => {
@@ -46,7 +90,7 @@ export default function DashboardPage() {
     });
   }
 
-  if (!list) return <section className="container page">Loading...</section>;
+  if (!list) return <DashboardLoading />;
 
   const live = list.filter((c) => ['active', 'matured'].includes(effectiveStatus(c)));
   const locked = live.reduce((s, c) => s + c.amount, 0);
@@ -77,7 +121,36 @@ export default function DashboardPage() {
         </div>
         <div className="card metric">
           <span className="muted">{status === 'connected' ? 'Wallet XLM (testnet)' : 'Ready to settle'}</span>
-          <b>{status === 'connected' ? (balance ? fmt(Number(balance)) : 'n/a') : matured}</b>
+          {status === 'connected' ? (
+            balanceState.status === 'loading' ? (
+              <Skeleton width="110px" height="32px" style={{ marginTop: '4px' }} />
+            ) : balanceState.status === 'success' ? (
+              <b>{fmt(Number(balanceState.balance))}</b>
+            ) : balanceState.status === 'unfunded' ? (
+              <div className="stack" style={{ gap: '4px', marginTop: '4px' }}>
+                <b style={{ fontSize: '1rem', color: 'var(--warn)' }}>Account not funded</b>
+                <a
+                  href={balanceState.friendbotUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="friendbot-link"
+                >
+                  Fund via Friendbot &rarr;
+                </a>
+              </div>
+            ) : balanceState.status === 'error' ? (
+              <div style={{ marginTop: '6px' }}>
+                <InlineError
+                  message="Couldn't load balance"
+                  onRetry={handleRetryBalance}
+                />
+              </div>
+            ) : (
+              <b>n/a</b>
+            )
+          ) : (
+            <b>{matured}</b>
+          )}
         </div>
       </div>
 
