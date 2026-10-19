@@ -70,7 +70,7 @@ export default function CreatePage() {
       owner: address,
       txHash: null,
     };
-    saveCommitments([c, ...loadCommitments()]);
+    saveCommitments([c, ...loadCommitments().items]);
     setCreated(c);
     setStep(3);
   }

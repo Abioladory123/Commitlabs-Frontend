@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   effectiveStatus,
   fmt,
@@ -9,21 +9,52 @@ import {
   maturityOf,
   progressOf,
   projectedYield,
+  resetCommitments,
+  sampleCommitments,
   saveCommitments,
   specFor,
+  subscribeCommitments,
   type Commitment,
 } from '@/lib/commitments';
 import { useWallet } from '@/components/WalletProvider';
 import { fetchXlmBalance } from '@/lib/wallet';
 
+interface Notice {
+  message: string;
+  canReset: boolean;
+}
+
 export default function DashboardPage() {
   const { status, address } = useWallet();
   const [list, setList] = useState<Commitment[] | null>(null);
   const [balance, setBalance] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
+
+  const reload = useCallback(() => {
+    const result = loadCommitments();
+    setList(result.items);
+
+    const messages: string[] = [];
+    let canReset = false;
+    if (result.corrupt) {
+      messages.push('Some saved commitments could not be read and were discarded.');
+      canReset = true;
+    } else if (result.dropped > 0) {
+      messages.push(
+        `${result.dropped} saved commitment${result.dropped === 1 ? '' : 's'} could not be validated and ${result.dropped === 1 ? 'was' : 'were'} skipped.`,
+      );
+      canReset = true;
+    }
+    if (result.storageUnavailable) {
+      messages.push('Browser storage is unavailable, so changes are kept only for this session.');
+    }
+    setNotice(messages.length ? { message: messages.join(' '), canReset } : null);
+  }, []);
 
   useEffect(() => {
-    setList(loadCommitments());
-  }, []);
+    reload();
+    return subscribeCommitments(reload);
+  }, [reload]);
 
   useEffect(() => {
     setBalance(null);
@@ -46,6 +77,16 @@ export default function DashboardPage() {
     });
   }
 
+  function loadSamples() {
+    saveCommitments([...(list ?? []), ...sampleCommitments()]);
+    reload();
+  }
+
+  function resetStorage() {
+    resetCommitments();
+    reload();
+  }
+
   if (!list) return <section className="container page">Loading...</section>;
 
   const live = list.filter((c) => ['active', 'matured'].includes(effectiveStatus(c)));
@@ -61,6 +102,19 @@ export default function DashboardPage() {
           New commitment
         </Link>
       </div>
+
+      {notice && (
+        <div className="notice" role="status">
+          <div className="row between wrap">
+            <span>{notice.message}</span>
+            {notice.canReset && (
+              <button className="btn btn-ghost" onClick={resetStorage}>
+                Reset demo data
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="grid4">
         <div className="card metric">
@@ -85,9 +139,14 @@ export default function DashboardPage() {
       {list.length === 0 ? (
         <div className="card center">
           <p className="muted">No commitments yet.</p>
-          <Link href="/create" className="btn btn-primary">
-            Create your first
-          </Link>
+          <div className="row center-row">
+            <Link href="/create" className="btn btn-primary">
+              Create your first
+            </Link>
+            <button className="btn btn-ghost" onClick={loadSamples}>
+              Load sample commitments
+            </button>
+          </div>
         </div>
       ) : (
         <div className="stack">
@@ -102,6 +161,7 @@ export default function DashboardPage() {
                     <h3>
                       {fmt(c.amount)} {c.asset}{' '}
                       <span className={`badge ${st}`}>{st}</span>
+                      {c.demo && <span className="badge demo">demo</span>}
                     </h3>
                     <p className="muted small">
                       {c.id} &middot; {specFor(c.type).name} &middot; {c.apy}% APY &middot; max
