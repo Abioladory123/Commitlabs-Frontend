@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "next dev",
+    "prebuild": "node scripts/validate-env.mjs",
     "build": "next build",
     "analyze": "cross-env ANALYZE=true next build",
     "start": "next start",

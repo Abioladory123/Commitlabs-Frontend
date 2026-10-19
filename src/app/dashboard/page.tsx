@@ -19,6 +19,7 @@ import {
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useWallet } from '@/components/WalletProvider';
 import { fetchXlmBalance } from '@/lib/wallet';
+import { config } from '@/lib/config';
 
 interface Notice {
   message: string;
@@ -164,7 +165,7 @@ export default function DashboardPage() {
           <b>{fmt(yieldTotal)}</b>
         </div>
         <div className="card metric">
-          <span className="muted">{status === 'connected' ? 'Wallet XLM (testnet)' : 'Ready to settle'}</span>
+          <span className="muted">{status === 'connected' ? `Wallet XLM (${config.networkDetails.label.toLowerCase()})` : 'Ready to settle'}</span>
           <b>{status === 'connected' ? (balance ? fmt(Number(balance)) : 'n/a') : matured}</b>
         </div>
       </div>

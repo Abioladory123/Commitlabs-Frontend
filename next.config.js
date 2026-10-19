@@ -1,4 +1,12 @@
 /** @type {import('next').NextConfig} */
+const { execSync } = require('child_process');
+
+try {
+  execSync('node scripts/validate-env.mjs', { stdio: 'inherit' });
+} catch (err) {
+  process.exit(1);
+}
+
 const withBundleAnalyzer = require('@next/bundle-analyzer')({
   enabled: process.env.ANALYZE === 'true',
 });
