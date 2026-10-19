@@ -104,6 +104,7 @@ input[type='checkbox'] { margin-top: 4px; }
 .badge.matured { color: var(--warn); border-color: var(--warn); }
 .badge.settled { color: var(--ok); border-color: var(--ok); }
 .badge.exited { color: var(--danger); border-color: var(--danger); }
+.badge.demo { color: var(--accent2); border-color: var(--accent2); }
 .bar { height: 8px; background: var(--bg2); border-radius: 999px; overflow: hidden; margin: 14px 0 6px; }
 .bar div { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); border-radius: 999px; }
 .docs { display: grid; grid-template-columns: 220px 1fr; gap: 40px; align-items: start; }
