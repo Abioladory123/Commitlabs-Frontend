@@ -21,6 +21,9 @@ import { useWallet } from '@/components/WalletProvider';
 import { fetchXlmBalance } from '@/lib/wallet';
 import type { DecodedEscrowEvent } from '@/lib/soroban/events';
 import { config, explorerTx } from '@/lib/config';
+import { InlineError } from '@/components/InlineError';
+import { Skeleton } from '@/components/Skeleton';
+import DashboardLoading from './loading';
 
 interface Notice {
   message: string;
@@ -33,16 +36,23 @@ function exitBreakdown(c: Commitment) {
   return { principal: c.amount, penaltyPct: c.penalty, penaltyAmount, returned: c.amount - penaltyAmount };
 }
 
+type BalanceState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'success'; balance: string }
+  | { status: 'unfunded'; friendbotUrl: string }
+  | { status: 'error'; message: string };
+
 export default function DashboardPage() {
   const { status, address } = useWallet();
   const [list, setList] = useState<Commitment[] | null>(null);
   const [pending, setPending] = useState<{ kind: 'exit' | 'remove'; id: string } | null>(null);
   const [announcement, setAnnouncement] = useState('');
-  const [balance, setBalance] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [recentEvents, setRecentEvents] = useState<DecodedEscrowEvent[]>([]);
   const [eventsLoading, setEventsLoading] = useState(false);
   const [eventsError, setEventsError] = useState<string | null>(null);
+  const [balanceState, setBalanceState] = useState<BalanceState>({ status: 'idle' });
 
   const reload = useCallback(() => {
     const result = loadCommitments();
@@ -65,15 +75,52 @@ export default function DashboardPage() {
     setNotice(messages.length ? { message: messages.join(' '), canReset } : null);
   }, []);
 
+  const loadBalance = useCallback((addr: string, signal?: AbortSignal) => {
+    setBalanceState({ status: 'loading' });
+    fetchXlmBalance(addr, { signal })
+      .then((res) => {
+        if (signal?.aborted) return;
+        if (res.status === 'success') {
+          setBalanceState({ status: 'success', balance: res.balance });
+        } else if (res.status === 'unfunded') {
+          setBalanceState({ status: 'unfunded', friendbotUrl: res.friendbotUrl });
+        } else {
+          setBalanceState({ status: 'error', message: res.message });
+        }
+      })
+      .catch((_err) => {
+        if (signal?.aborted) return;
+        setBalanceState({ status: 'error', message: "Couldn't load balance" });
+      });
+  }, []);
+
+  useEffect(() => {
+    if (!address || status !== 'connected') {
+      setBalanceState({ status: 'idle' });
+      return;
+    }
+
+    const controller = new AbortController();
+    loadBalance(address, controller.signal);
+
+    return () => {
+      controller.abort();
+    };
+  }, [address, status, loadBalance]);
+
+  const handleRetryBalance = () => {
+    if (address) {
+      loadBalance(address);
+    }
+  };
+
   useEffect(() => {
     reload();
     return subscribeCommitments(reload);
   }, [reload]);
 
   useEffect(() => {
-    setBalance(null);
     if (address) {
-      fetchXlmBalance(address).then(setBalance);
       setEventsLoading(true);
       setEventsError(null);
       // Load the Soroban RPC client lazily so stellar-sdk stays out of the
@@ -133,12 +180,7 @@ export default function DashboardPage() {
     }
   }
 
-  if (!list)
-    return (
-      <section className="container page" aria-busy="true">
-        <p role="status">Loading...</p>
-      </section>
-    );
+  if (!list) return <DashboardLoading />;
 
   const target = pending ? list.find((c) => c.id === pending.id) : undefined;
   const breakdown = target ? exitBreakdown(target) : null;
@@ -188,7 +230,36 @@ export default function DashboardPage() {
         </div>
         <div className="card metric">
           <span className="muted">{status === 'connected' ? `Wallet XLM (${config.networkDetails.label.toLowerCase()})` : 'Ready to settle'}</span>
-          <b>{status === 'connected' ? (balance ? fmt(Number(balance)) : 'n/a') : matured}</b>
+          {status === 'connected' ? (
+            balanceState.status === 'loading' ? (
+              <Skeleton width="110px" height="32px" style={{ marginTop: '4px' }} />
+            ) : balanceState.status === 'success' ? (
+              <b>{fmt(Number(balanceState.balance))}</b>
+            ) : balanceState.status === 'unfunded' ? (
+              <div className="stack" style={{ gap: '4px', marginTop: '4px' }}>
+                <b style={{ fontSize: '1rem', color: 'var(--warn)' }}>Account not funded</b>
+                <a
+                  href={balanceState.friendbotUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="friendbot-link"
+                >
+                  Fund via Friendbot &rarr;
+                </a>
+              </div>
+            ) : balanceState.status === 'error' ? (
+              <div style={{ marginTop: '6px' }}>
+                <InlineError
+                  message="Couldn't load balance"
+                  onRetry={handleRetryBalance}
+                />
+              </div>
+            ) : (
+              <b>n/a</b>
+            )
+          ) : (
+            <b>{matured}</b>
+          )}
         </div>
       </div>
 

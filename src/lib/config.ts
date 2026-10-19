@@ -93,3 +93,10 @@ export function explorerTx(hash: string): string {
 export function explorerAccount(addr: string): string {
   return `${config.networkDetails.explorerBaseUrl}/account/${addr}`;
 }
+
+export const FRIENDBOT_URL =
+  process.env.NEXT_PUBLIC_FRIENDBOT_URL ?? 'https://friendbot.stellar.org';
+
+export function friendbotAccountUrl(address: string): string {
+  return `${FRIENDBOT_URL}/?addr=${encodeURIComponent(address)}`;
+}
