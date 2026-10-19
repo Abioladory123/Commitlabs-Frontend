@@ -17,6 +17,9 @@
 //! (`src/lib/backend/services/contracts.ts`) expects to call: `create_commitment`,
 //! `fund_escrow`, `release`, `refund`, and `dispute`.
 
+#[cfg(test)]
+mod test_release;
+
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, Address, BytesN, Env, Map, String, Symbol,
     Vec,
@@ -779,6 +782,15 @@ impl EscrowContract {
         caller.require_auth();
         let mut c = Self::load(env, commitment_id)?;
 
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        if caller != &c.owner && caller != &admin {
+            return Err(Error::Unauthorized);
+        }
+
         if c.status == EscrowStatus::Violated {
             return Err(Error::CommitmentViolated);
         }
@@ -789,7 +801,10 @@ impl EscrowContract {
             return Err(Error::NotMatured);
         }
 
-        let total_payout = c.amount + c.accrued_yield;
+        let total_payout = c
+            .amount
+            .checked_add(c.accrued_yield)
+            .ok_or(Error::InvalidAmount)?;
 
         // Effects: consume the reservation (decrementing both the pool and the
         // reserved total) and mark the commitment as released before the token
@@ -798,6 +813,8 @@ impl EscrowContract {
         Self::consume_reserved_yield(env, commitment_id, c.accrued_yield)?;
         c.status = EscrowStatus::Released;
         Self::save(env, &c);
+
+        Self::token_client(env).transfer(&env.current_contract_address(), &c.owner, &total_payout);
 
         Ok(total_payout)
     }
