@@ -10,7 +10,8 @@
 //! minus penalty), or is disputed (frozen pending resolution).
 //!
 //! Lifecycle:
-//!   create_commitment -> fund_escrow -> {release | refund | dispute -> resolve_dispute}
+//!   create_commitment -> {fund_escrow | cancel_commitment}
+//!   fund_escrow -> {release | refund | dispute -> resolve_dispute}
 //!
 //! This contract mirrors the methods the backend service layer
 //! (`src/lib/backend/services/contracts.ts`) expects to call: `create_commitment`,
@@ -24,6 +25,9 @@ use soroban_sdk::{
 // Configuration constants for escrow contract
 // Number of seconds in a day used for maturity calculation.
 pub const SECONDS_PER_DAY: u64 = 86_400;
+
+/// Maximum time a commitment may remain unfunded after creation.
+pub const FUNDING_WINDOW_SECONDS: u64 = 7 * SECONDS_PER_DAY;
 
 /// Upper bound for commitment amount enforced by `create_commitment`.
 /// Aligns with backend `CommitmentLimits.max_amount`.
@@ -106,6 +110,8 @@ pub enum EscrowStatus {
     Disputed,
     /// Compliance score dropped below the violation threshold; transfers frozen until resolved.
     Violated,
+    /// Unfunded commitment was cancelled by its owner or expired.
+    Cancelled,
 }
 
 /// Categorized dispute reason enum. Enables efficient on-chain classification
@@ -199,6 +205,8 @@ pub enum Error {
     CommitmentViolated = 14,
     /// Provided wasm hash is invalid (e.g. zero hash).
     InvalidWasmHash = 15,
+    /// The commitment's funding window has elapsed.
+    FundingWindowExpired = 16,
 }
 
 /// Result of an early exit commitment.
@@ -576,6 +584,21 @@ impl EscrowContract {
             return Err(Error::InvalidState);
         }
 
+        let now = env.ledger().timestamp();
+        let funding_deadline = c
+            .created_at
+            .checked_add(FUNDING_WINDOW_SECONDS)
+            .ok_or(Error::InvalidDuration)?;
+        if now > funding_deadline {
+            return Err(Error::FundingWindowExpired);
+        }
+
+        let lock_secs = c
+            .maturity
+            .checked_sub(c.created_at)
+            .ok_or(Error::InvalidDuration)?;
+        c.maturity = now.checked_add(lock_secs).ok_or(Error::InvalidDuration)?;
+
         let configured_token: Address = env
             .storage()
             .instance()
@@ -594,6 +617,8 @@ impl EscrowContract {
 
         c.status = EscrowStatus::Funded;
         Self::save(&env, &c);
+        let owner_ids = Self::owner_commitment_ids(&env, c.owner.clone());
+        Self::refresh_owner_index_ttl(&env, &c.owner, &owner_ids);
 
         Self::publish_commitment_event(
             &env,
@@ -605,6 +630,39 @@ impl EscrowContract {
                 risk: c.risk,
             },
         );
+        Ok(())
+    }
+
+    /// Cancel an unfunded commitment. Before the funding deadline only its
+    /// owner may cancel with authorization; after expiry cancellation is
+    /// permissionless, including while contract writes are paused.
+    pub fn cancel_commitment(
+        env: Env,
+        commitment_id: u64,
+        caller: Address,
+    ) -> Result<(), Error> {
+        Self::require_init(&env)?;
+        let mut c = Self::load(&env, commitment_id)?;
+        if c.status != EscrowStatus::Created {
+            return Err(Error::InvalidState);
+        }
+
+        let funding_deadline = c
+            .created_at
+            .checked_add(FUNDING_WINDOW_SECONDS)
+            .ok_or(Error::InvalidDuration)?;
+        if env.ledger().timestamp() <= funding_deadline {
+            if caller != c.owner {
+                return Err(Error::Unauthorized);
+            }
+            Self::require_not_paused(&env)?;
+            caller.require_auth();
+        }
+
+        c.status = EscrowStatus::Cancelled;
+        Self::save(&env, &c);
+        Self::deindex_owner(&env, &c.owner, commitment_id);
+        Self::publish_commitment_event(&env, "cancel_commitment", &c, ());
         Ok(())
     }
 
@@ -1425,3 +1483,5 @@ impl EscrowContract {
     }
 }
 
+#[cfg(test)]
+mod test_funding_window;
