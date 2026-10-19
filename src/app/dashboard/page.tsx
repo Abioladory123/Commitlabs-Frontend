@@ -19,7 +19,8 @@ import {
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useWallet } from '@/components/WalletProvider';
 import { fetchXlmBalance } from '@/lib/wallet';
-import { config } from '@/lib/config';
+import type { DecodedEscrowEvent } from '@/lib/soroban/events';
+import { config, explorerTx } from '@/lib/config';
 
 interface Notice {
   message: string;
@@ -39,6 +40,9 @@ export default function DashboardPage() {
   const [announcement, setAnnouncement] = useState('');
   const [balance, setBalance] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [recentEvents, setRecentEvents] = useState<DecodedEscrowEvent[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
+  const [eventsError, setEventsError] = useState<string | null>(null);
 
   const reload = useCallback(() => {
     const result = loadCommitments();
@@ -68,7 +72,25 @@ export default function DashboardPage() {
 
   useEffect(() => {
     setBalance(null);
-    if (address) fetchXlmBalance(address).then(setBalance);
+    if (address) {
+      fetchXlmBalance(address).then(setBalance);
+      setEventsLoading(true);
+      setEventsError(null);
+      // Load the Soroban RPC client lazily so stellar-sdk stays out of the
+      // dashboard's first-load bundle (see performance-budgets.json).
+      import('@/lib/soroban/events')
+        .then(({ fetchEscrowEvents }) =>
+          fetchEscrowEvents({
+            limit: 5,
+            filters: { owner: address },
+          }),
+        )
+        .then((res) => setRecentEvents(res.events))
+        .catch((err) => setEventsError(err?.message || 'Failed to load activity'))
+        .finally(() => setEventsLoading(false));
+    } else {
+      setRecentEvents([]);
+    }
   }, [address]);
 
   function update(id: string, patch: Partial<Commitment>) {
@@ -303,6 +325,57 @@ export default function DashboardPage() {
           </dl>
         )}
       </ConfirmDialog>
+
+      <div className="row between wrap mt">
+        <h2>Recent activity</h2>
+        <Link href="/activity" className="btn btn-ghost small">
+          View all activity &rarr;
+        </Link>
+      </div>
+      {!address ? (
+        <div className="card center">
+          <p className="muted">Connect your wallet to see your recent contract activity.</p>
+        </div>
+      ) : eventsLoading ? (
+        <div className="card center">
+          <p className="muted">Loading recent on-chain events...</p>
+        </div>
+      ) : eventsError ? (
+        <div className="card center">
+          <p className="error-text small">{eventsError}</p>
+        </div>
+      ) : recentEvents.length === 0 ? (
+        <div className="card center">
+          <p className="muted">No recent on-chain activity found for your address.</p>
+        </div>
+      ) : (
+        <div className="stack">
+          {recentEvents.map((ev) => (
+            <div key={ev.id} className="card row between wrap">
+              <div className="row gap">
+                <span className={`badge ${ev.kind}`}>{ev.kind}</span>
+                <span>
+                  {ev.commitmentId ? `Commitment #${ev.commitmentId}` : 'Contract Action'}
+                </span>
+                {ev.amount && <b className="small">{fmt(Number(ev.amount))} XLM</b>}
+              </div>
+              <div className="row gap muted small">
+                <span>{new Date(ev.at).toLocaleDateString()}</span>
+                {ev.txHash && (
+                  <a
+                    href={explorerTx(ev.txHash)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="link"
+                  >
+                    tx
+                  </a>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
