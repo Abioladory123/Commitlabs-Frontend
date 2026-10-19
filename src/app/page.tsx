@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { TYPES } from '@/lib/commitments';
+import { config } from '@/lib/config';
 
 const STEPS = [
   {
@@ -23,7 +24,7 @@ const FEATURES = [
   ['Enforceable', 'Rules live in a smart contract, not a terms page.'],
   ['Attestable', 'Every state change emits events anyone can verify on-chain.'],
   ['Composable', 'Commitments are standard on-chain records other protocols can build on.'],
-  ['Transparent', 'Open source UI and contracts, deployed on Stellar testnet.'],
+  ['Transparent', `Open source UI and contracts, deployed on Stellar ${config.networkDetails.label.toLowerCase()}.`],
 ];
 
 export default function Home() {
@@ -31,7 +32,7 @@ export default function Home() {
     <>
       <section className="hero">
         <div className="container">
-          <span className="pill">Live on Stellar testnet</span>
+          <span className="pill">{config.networkDetails.badgeLabel}</span>
           <h1>
             Liquidity as a <span className="grad">commitment</span>
           </h1>

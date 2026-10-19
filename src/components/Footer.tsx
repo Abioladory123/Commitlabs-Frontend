@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { LIVE_URL, REPO_URL } from '@/lib/config';
+import { LIVE_URL, REPO_URL, config } from '@/lib/config';
 
 export function Footer() {
   return (
@@ -14,8 +14,8 @@ export function Footer() {
           <a href={REPO_URL} target="_blank" rel="noreferrer">
             GitHub
           </a>
-          <a href="https://stellar.expert/explorer/testnet" target="_blank" rel="noreferrer">
-            Testnet explorer
+          <a href={config.networkDetails.explorerBaseUrl} target="_blank" rel="noreferrer">
+            {config.networkDetails.label} explorer
           </a>
         </span>
       </div>

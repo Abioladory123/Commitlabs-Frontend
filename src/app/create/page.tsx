@@ -13,7 +13,7 @@ import {
   type CommitmentType,
 } from '@/lib/commitments';
 import { useWallet } from '@/components/WalletProvider';
-import { ESCROW_CONTRACT_ID, explorerContractUrl } from '@/lib/config';
+import { ESCROW_CONTRACT_ID, explorerContractUrl, config } from '@/lib/config';
 
 const ASSETS = ['USDC', 'XLM', 'EURC'];
 const STEP_LABELS = ['Type', 'Configure', 'Review', 'Done'];
@@ -208,8 +208,8 @@ export default function CreatePage() {
             I understand leaving early applies the penalty and these terms cannot be changed.
           </label>
           <p className="muted small">
-            Demo mode: the commitment is recorded in this browser. On-chain submission to the
-            testnet escrow contract is enabled once a contract ID is configured
+            Demo mode: the commitment is recorded in this browser. On-chain submission to the{' '}
+            {config.networkDetails.label.toLowerCase()} escrow contract is enabled once a contract ID is configured
             {ESCROW_CONTRACT_ID ? '.' : ' (none set in this deployment).'}
           </p>
           <div className="row between">

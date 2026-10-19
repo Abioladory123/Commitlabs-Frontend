@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { TYPES } from '@/lib/commitments';
-import { ESCROW_CONTRACT_ID, NETWORK, REPO_URL, explorerContractUrl } from '@/lib/config';
+import { ESCROW_CONTRACT_ID, NETWORK, REPO_URL, explorerContractUrl, config } from '@/lib/config';
 
 export const metadata = { title: 'Docs - CommitLabs' };
 
@@ -156,21 +156,21 @@ npm run dev   # http://localhost:3000`}</code>
                 <td>
                   <code>NEXT_PUBLIC_STELLAR_NETWORK</code>
                 </td>
-                <td>testnet</td>
-                <td>Network label</td>
+                <td>{config.network}</td>
+                <td>Network identifier (testnet | futurenet | mainnet)</td>
               </tr>
               <tr>
                 <td>
                   <code>NEXT_PUBLIC_HORIZON_URL</code>
                 </td>
-                <td>horizon-testnet.stellar.org</td>
+                <td>{config.horizonUrl.replace(/^https?:\/\//, '')}</td>
                 <td>Wallet balance lookups</td>
               </tr>
               <tr>
                 <td>
                   <code>NEXT_PUBLIC_SOROBAN_RPC_URL</code>
                 </td>
-                <td>soroban-testnet.stellar.org</td>
+                <td>{config.sorobanRpcUrl.replace(/^https?:\/\//, '')}</td>
                 <td>Soroban RPC endpoint</td>
               </tr>
               <tr>
@@ -187,8 +187,9 @@ npm run dev   # http://localhost:3000`}</code>
         <h2 id="faq">FAQ</h2>
         <h3>Do I need a wallet?</h3>
         <p>
-          No. Wallet connection through Freighter is optional and only adds your testnet balance. If
-          the extension is missing the app keeps working in demo mode.
+          No. Wallet connection through Freighter is optional and only adds your{' '}
+          {config.networkDetails.label.toLowerCase()} balance. If the extension is missing the app
+          keeps working in demo mode.
         </p>
         <h3>Where are my commitments stored?</h3>
         <p>
@@ -196,7 +197,11 @@ npm run dev   # http://localhost:3000`}</code>
           server.
         </p>
         <h3>Is this mainnet?</h3>
-        <p>No. Everything targets Stellar testnet and uses test funds only.</p>
+        <p>
+          {config.network === 'mainnet'
+            ? 'Yes. This deployment targets Stellar mainnet.'
+            : `No. Everything targets Stellar ${config.networkDetails.label.toLowerCase()} and uses test funds only.`}
+        </p>
       </div>
     </section>
   );
