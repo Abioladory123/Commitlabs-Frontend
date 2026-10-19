@@ -14,12 +14,17 @@ import {
   type Commitment,
 } from '@/lib/commitments';
 import { useWallet } from '@/components/WalletProvider';
-import { fetchXlmBalance } from '@/lib/wallet';
+import { fetchXlmBalance, shortAddress } from '@/lib/wallet';
+import { fetchEscrowEvents, type DecodedEscrowEvent } from '@/lib/soroban/events';
+import { explorerContractUrl } from '@/lib/config';
 
 export default function DashboardPage() {
   const { status, address } = useWallet();
   const [list, setList] = useState<Commitment[] | null>(null);
   const [balance, setBalance] = useState<string | null>(null);
+  const [recentEvents, setRecentEvents] = useState<DecodedEscrowEvent[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
+  const [eventsError, setEventsError] = useState<string | null>(null);
 
   useEffect(() => {
     setList(loadCommitments());
@@ -27,7 +32,20 @@ export default function DashboardPage() {
 
   useEffect(() => {
     setBalance(null);
-    if (address) fetchXlmBalance(address).then(setBalance);
+    if (address) {
+      fetchXlmBalance(address).then(setBalance);
+      setEventsLoading(true);
+      setEventsError(null);
+      fetchEscrowEvents({
+        limit: 5,
+        filters: { owner: address },
+      })
+        .then((res) => setRecentEvents(res.events))
+        .catch((err) => setEventsError(err?.message || 'Failed to load activity'))
+        .finally(() => setEventsLoading(false));
+    } else {
+      setRecentEvents([]);
+    }
   }, [address]);
 
   function update(id: string, patch: Partial<Commitment>) {
@@ -151,6 +169,57 @@ export default function DashboardPage() {
               </article>
             );
           })}
+        </div>
+      )}
+
+      <div className="row between wrap mt">
+        <h2>Recent activity</h2>
+        <Link href="/activity" className="btn btn-ghost small">
+          View all activity &rarr;
+        </Link>
+      </div>
+      {!address ? (
+        <div className="card center">
+          <p className="muted">Connect your wallet to see your recent contract activity.</p>
+        </div>
+      ) : eventsLoading ? (
+        <div className="card center">
+          <p className="muted">Loading recent on-chain events...</p>
+        </div>
+      ) : eventsError ? (
+        <div className="card center">
+          <p className="error-text small">{eventsError}</p>
+        </div>
+      ) : recentEvents.length === 0 ? (
+        <div className="card center">
+          <p className="muted">No recent on-chain activity found for your address.</p>
+        </div>
+      ) : (
+        <div className="stack">
+          {recentEvents.map((ev) => (
+            <div key={ev.id} className="card row between wrap">
+              <div className="row gap">
+                <span className={`badge ${ev.kind}`}>{ev.kind}</span>
+                <span>
+                  {ev.commitmentId ? `Commitment #${ev.commitmentId}` : 'Contract Action'}
+                </span>
+                {ev.amount && <b className="small">{fmt(Number(ev.amount))} XLM</b>}
+              </div>
+              <div className="row gap muted small">
+                <span>{new Date(ev.at).toLocaleDateString()}</span>
+                {ev.txHash && (
+                  <a
+                    href={explorerContractUrl(ev.txHash)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="link"
+                  >
+                    tx
+                  </a>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </section>

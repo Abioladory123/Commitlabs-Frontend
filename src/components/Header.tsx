@@ -8,6 +8,7 @@ import { shortAddress } from '@/lib/wallet';
 const LINKS = [
   { href: '/create', label: 'Create' },
   { href: '/dashboard', label: 'Dashboard' },
+  { href: '/activity', label: 'Activity' },
   { href: '/docs', label: 'Docs' },
 ];
 
