@@ -11,3 +11,10 @@ export function explorerContractUrl(id: string): string {
   return `https://stellar.expert/explorer/testnet/contract/${id}`;
 }
 export const LIVE_URL = 'https://commitlabs-frontend-pi.vercel.app';
+
+export const FRIENDBOT_URL =
+  process.env.NEXT_PUBLIC_FRIENDBOT_URL ?? 'https://friendbot.stellar.org';
+
+export function friendbotAccountUrl(address: string): string {
+  return `${FRIENDBOT_URL}/?addr=${encodeURIComponent(address)}`;
+}
