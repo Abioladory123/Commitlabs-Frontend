@@ -3,8 +3,18 @@
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import {
+  AMOUNT_ERROR_MESSAGES,
+  MAX_DAYS,
+  formatAmount,
+  parseAmount,
+  parseDays,
+  penaltyOf,
+  yieldOf,
+  type DaysError,
+} from '@/lib/amount';
+import {
   TYPES,
-  fmt,
+  fmtUnits,
   loadCommitments,
   newId,
   saveCommitments,
@@ -17,6 +27,19 @@ import { ESCROW_CONTRACT_ID, explorerContractUrl, config } from '@/lib/config';
 
 const ASSETS = ['USDC', 'XLM', 'EURC'];
 const STEP_LABELS = ['Type', 'Configure', 'Review', 'Done'];
+
+function daysMessage(reason: DaysError, name: string, minDays: number): string {
+  switch (reason) {
+    case 'empty':
+      return 'Enter the lock duration in days.';
+    case 'invalid_characters':
+      return 'Use whole days only, digits 0 to 9.';
+    case 'below_min':
+      return `Minimum lock for ${name} is ${minDays} days.`;
+    case 'above_max':
+      return `Maximum lock is ${MAX_DAYS} days.`;
+  }
+}
 
 export default function CreatePage() {
   const { address } = useWallet();
@@ -55,22 +78,21 @@ export default function CreatePage() {
   }, []);
 
   const spec = specFor(type);
-  const amt = Number(amount);
-  const dur = Number(days);
-  const amountErr = !Number.isFinite(amt) || amt <= 0 ? 'Enter an amount greater than zero.' : null;
-  const daysErr =
-    !Number.isInteger(dur) || dur < spec.minDays
-      ? `Minimum lock for ${spec.name} is ${spec.minDays} days.`
-      : dur > 365
-        ? 'Maximum lock is 365 days.'
-        : null;
-  const valid = !amountErr && !daysErr;
-  const projected = valid ? (amt * (spec.apy / 100) * dur) / 365 : 0;
+  const parsedAmount = parseAmount(amount);
+  const parsedDays = parseDays(days, { min: spec.minDays });
+  const amountErr = parsedAmount.ok ? null : AMOUNT_ERROR_MESSAGES[parsedAmount.reason];
+  const daysErr = parsedDays.ok ? null : daysMessage(parsedDays.reason, spec.name, spec.minDays);
+  const amt = parsedAmount.ok ? parsedAmount.value : 0n;
+  const dur = parsedDays.ok ? parsedDays.value : 0;
+  const valid = parsedAmount.ok && parsedDays.ok;
+  const projected = valid ? yieldOf(amt, spec.apy, dur) : 0n;
+  const penalty = valid ? penaltyOf(amt, spec.penalty) : 0n;
 
   function pickType(t: CommitmentType) {
     setType(t);
     const min = specFor(t).minDays;
-    if (!Number.isInteger(Number(days)) || Number(days) < min) setDays(String(min));
+    const current = parseDays(days);
+    if (!current.ok || current.value < min) setDays(String(min));
   }
 
   function submit() {
@@ -78,7 +100,7 @@ export default function CreatePage() {
       id: newId(),
       type,
       asset,
-      amount: amt,
+      amount: amt.toString(),
       durationDays: dur,
       maxLoss: spec.maxLoss,
       penalty: spec.penalty,
@@ -192,6 +214,7 @@ export default function CreatePage() {
               <input
                 ref={amountRef}
                 inputMode="decimal"
+                pattern="\d+(\.\d+)?"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 onBlur={() => setAmountTouched(true)}
@@ -200,7 +223,7 @@ export default function CreatePage() {
               />
             </label>
             <small id="amount" className="muted">
-              Enter a number greater than zero.
+              Digits and an optional decimal point, up to 7 decimals.
             </small>
             {showAmountErr && (
               <small id="amount-err" className="err">
@@ -214,6 +237,7 @@ export default function CreatePage() {
               <input
                 ref={daysRef}
                 inputMode="numeric"
+                pattern="\d+"
                 value={days}
                 onChange={(e) => setDays(e.target.value)}
                 onBlur={() => setDaysTouched(true)}
@@ -242,7 +266,7 @@ export default function CreatePage() {
             <li>
               <span>Projected yield</span>
               <b>
-                {fmt(projected)} {asset}
+                {fmtUnits(projected)} {asset}
               </b>
             </li>
           </ul>
@@ -270,7 +294,7 @@ export default function CreatePage() {
             <li>
               <span>Principal</span>
               <b>
-                {fmt(amt)} {asset}
+                {formatAmount(amt)} {asset}
               </b>
             </li>
             <li>
@@ -284,13 +308,13 @@ export default function CreatePage() {
             <li>
               <span>Projected yield</span>
               <b>
-                {fmt(projected)} {asset}
+                {formatAmount(projected)} {asset}
               </b>
             </li>
             <li>
               <span>Early exit penalty</span>
               <b>
-                {spec.penalty}% ({fmt((amt * spec.penalty) / 100)} {asset})
+                {spec.penalty}% ({formatAmount(penalty)} {asset})
               </b>
             </li>
           </ul>
@@ -323,7 +347,7 @@ export default function CreatePage() {
             Commitment created
           </h2>
           <p className="muted">
-            {created.id} &middot; {fmt(created.amount)} {created.asset} for {created.durationDays}{' '}
+            {created.id} &middot; {formatAmount(BigInt(created.amount))} {created.asset} for {created.durationDays}{' '}
             days
           </p>
           {ESCROW_CONTRACT_ID && (

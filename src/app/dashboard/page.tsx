@@ -2,9 +2,11 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
+import { formatAmount, penaltyOf } from '@/lib/amount';
 import {
   effectiveStatus,
   fmt,
+  fmtUnits,
   loadCommitments,
   maturityOf,
   progressOf,
@@ -32,8 +34,9 @@ interface Notice {
 
 // Single source for the numbers shown in the exit dialog and applied to the commitment.
 function exitBreakdown(c: Commitment) {
-  const penaltyAmount = (c.amount * c.penalty) / 100;
-  return { principal: c.amount, penaltyPct: c.penalty, penaltyAmount, returned: c.amount - penaltyAmount };
+  const principal = BigInt(c.amount);
+  const penaltyAmount = penaltyOf(principal, c.penalty);
+  return { principal, penaltyPct: c.penalty, penaltyAmount, returned: principal - penaltyAmount };
 }
 
 type BalanceState =
@@ -186,8 +189,8 @@ export default function DashboardPage() {
   const breakdown = target ? exitBreakdown(target) : null;
 
   const live = list.filter((c) => ['active', 'matured'].includes(effectiveStatus(c)));
-  const locked = live.reduce((s, c) => s + c.amount, 0);
-  const yieldTotal = live.reduce((s, c) => s + projectedYield(c), 0);
+  const locked = live.reduce((s, c) => s + BigInt(c.amount), 0n);
+  const yieldTotal = live.reduce((s, c) => s + projectedYield(c), 0n);
   const matured = list.filter((c) => effectiveStatus(c) === 'matured').length;
 
   return (
@@ -222,11 +225,11 @@ export default function DashboardPage() {
         </div>
         <div className="card metric">
           <span className="muted">Total locked</span>
-          <b>{fmt(locked)}</b>
+          <b>{fmtUnits(locked)}</b>
         </div>
         <div className="card metric">
           <span className="muted">Projected yield</span>
-          <b>{fmt(yieldTotal)}</b>
+          <b>{fmtUnits(yieldTotal)}</b>
         </div>
         <div className="card metric">
           <span className="muted">{status === 'connected' ? `Wallet XLM (${config.networkDetails.label.toLowerCase()})` : 'Ready to settle'}</span>
@@ -288,7 +291,7 @@ export default function DashboardPage() {
                 <div className="row between wrap">
                   <div>
                     <h3>
-                      {fmt(c.amount)} {c.asset}{' '}
+                      {fmtUnits(BigInt(c.amount))} {c.asset}{' '}
                       <span className={`badge ${st}`}>{st}</span>
                       {c.demo && <span className="badge demo">demo</span>}
                     </h3>
@@ -350,10 +353,10 @@ export default function DashboardPage() {
                   {st === 'active'
                     ? `${pct}% elapsed, ${left} day${left === 1 ? '' : 's'} to maturity`
                     : st === 'matured'
-                      ? `Matured. Projected payout ${fmt(c.amount + projectedYield(c))} ${c.asset}`
+                      ? `Matured. Projected payout ${formatAmount(BigInt(c.amount) + projectedYield(c))} ${c.asset}`
                       : st === 'settled'
-                        ? `Settled with ${fmt(projectedYield(c))} ${c.asset} yield`
-                        : `Exited early, ${fmt(exitBreakdown(c).penaltyAmount)} ${c.asset} penalty paid`}
+                        ? `Settled with ${formatAmount(projectedYield(c))} ${c.asset} yield`
+                        : `Exited early, ${formatAmount(exitBreakdown(c).penaltyAmount)} ${c.asset} penalty paid`}
                 </p>
               </article>
             );
@@ -381,17 +384,17 @@ export default function DashboardPage() {
           <dl className="dialog-breakdown">
             <dt>Principal</dt>
             <dd>
-              {fmt(breakdown.principal)} {target.asset}
+              {formatAmount(breakdown.principal)} {target.asset}
             </dd>
             <dt>Penalty</dt>
             <dd>{breakdown.penaltyPct}%</dd>
             <dt>Penalty amount</dt>
             <dd>
-              {fmt(breakdown.penaltyAmount)} {target.asset}
+              {formatAmount(breakdown.penaltyAmount)} {target.asset}
             </dd>
             <dt>Amount returned</dt>
             <dd>
-              {fmt(breakdown.returned)} {target.asset}
+              {formatAmount(breakdown.returned)} {target.asset}
             </dd>
           </dl>
         )}
