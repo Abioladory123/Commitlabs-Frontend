@@ -7,6 +7,7 @@ import {
   sampleCommitments,
   saveCommitments,
   validateCommitment,
+  type Commitment,
 } from '../commitments';
 
 const KEY = 'commitlabs.commitments.v1';
@@ -119,10 +120,10 @@ describe('loadCommitments with legacy storage', () => {
 });
 
 describe('projectedYield', () => {
-  it('uses bigint basis point math on the stored base units', () => {
+  it('uses the contract integer yield math on the stored base units', () => {
     const c = validateCommitment(record({ amount: '10000000000', durationDays: 14 }))!;
-    // 1,000 at 9% for 14 days = 3.4520547... floored to 34_520_547 stroops
-    expect(projectedYield(c)).toBe(34_520_547n);
+    // 1,000 balanced (700 bps) for 14 days = 2.6849315... floored to 26_849_315 stroops
+    expect(projectedYield(c)).toBe(26_849_315n);
   });
 });
 
@@ -131,5 +132,42 @@ describe('sampleCommitments', () => {
     const samples = sampleCommitments();
     expect(samples.map((c) => c.amount)).toEqual(['25000000000', '100000000000']);
     for (const s of samples) expect(validateCommitment(s)).not.toBeNull();
+  });
+});
+
+const base: Commitment = {
+  id: 'CMT-1',
+  type: 'balanced',
+  asset: 'USDC',
+  amount: '10000000000',
+  durationDays: 30,
+  maxLoss: 8,
+  penalty: 5,
+  apy: 9,
+  createdAt: Date.now(),
+  status: 'active',
+  owner: 'GCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHP',
+  txHash: null,
+};
+
+describe('CommitmentStatus validation', () => {
+  it('accepts disputed and violated statuses', () => {
+    for (const status of ['disputed', 'violated']) {
+      const c = validateCommitment({ ...base, status });
+      expect(c?.status).toBe(status);
+    }
+  });
+
+  it('still rejects invalid statuses', () => {
+    expect(validateCommitment({ ...base, status: 'frozen' as any })).toBeNull();
+  });
+
+  it('accepts commitments with a dispute record', () => {
+    const c = validateCommitment({
+      ...base,
+      status: 'disputed',
+      dispute: { reasonCategory: 2, reasonText: 'Fraud', disputedAt: new Date(), disputedBy: base.owner! },
+    });
+    expect(c?.dispute?.reasonCategory).toBe(2);
   });
 });

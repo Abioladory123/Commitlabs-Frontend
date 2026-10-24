@@ -4,12 +4,10 @@ import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import {
   AMOUNT_ERROR_MESSAGES,
-  MAX_DAYS,
+  MAX_AMOUNT,
   formatAmount,
   parseAmount,
   parseDays,
-  penaltyOf,
-  yieldOf,
   type DaysError,
 } from '@/lib/amount';
 import {
@@ -24,25 +22,34 @@ import {
 } from '@/lib/commitments';
 import { useWallet } from '@/components/WalletProvider';
 import { ESCROW_CONTRACT_ID, explorerContractUrl, config } from '@/lib/config';
+import { useProtocolParams } from '@/lib/protocol';
+import {
+  DISPLAY_APY,
+  MAX_DURATION_DAYS,
+  MIN_DURATION_DAYS,
+  projectYieldStroops,
+} from '@/lib/yield';
+import { Skeleton } from '@/components/Skeleton';
 
 const ASSETS = ['USDC', 'XLM', 'EURC'];
 const STEP_LABELS = ['Type', 'Configure', 'Review', 'Done'];
 
-function daysMessage(reason: DaysError, name: string, minDays: number): string {
+function daysMessage(reason: DaysError, minDays: number): string {
   switch (reason) {
     case 'empty':
       return 'Enter the lock duration in days.';
     case 'invalid_characters':
       return 'Use whole days only, digits 0 to 9.';
     case 'below_min':
-      return `Minimum lock for ${name} is ${minDays} days.`;
+      return `Minimum lock is ${minDays} day${minDays === 1 ? '' : 's'}.`;
     case 'above_max':
-      return `Maximum lock is ${MAX_DAYS} days.`;
+      return `Maximum lock is ${MAX_DURATION_DAYS} days.`;
   }
 }
 
 export default function CreatePage() {
   const { address } = useWallet();
+  const { params, loading: paramsLoading, isFallback } = useProtocolParams();
   const [step, setStep] = useState(0);
   const [type, setType] = useState<CommitmentType>('balanced');
   const [asset, setAsset] = useState('USDC');
@@ -78,21 +85,23 @@ export default function CreatePage() {
   }, []);
 
   const spec = specFor(type);
+  const currentApy = DISPLAY_APY[type];
+  const penaltyBps = params.penalties[type];
+  const currentPenaltyPct = penaltyBps / 100;
+
+  // Exact fixed-point parsing; yield and penalty use the contract's integer math.
   const parsedAmount = parseAmount(amount);
-  const parsedDays = parseDays(days, { min: spec.minDays });
+  const parsedDays = parseDays(days, { min: MIN_DURATION_DAYS, max: MAX_DURATION_DAYS });
   const amountErr = parsedAmount.ok ? null : AMOUNT_ERROR_MESSAGES[parsedAmount.reason];
-  const daysErr = parsedDays.ok ? null : daysMessage(parsedDays.reason, spec.name, spec.minDays);
+  const daysErr = parsedDays.ok ? null : daysMessage(parsedDays.reason, MIN_DURATION_DAYS);
   const amt = parsedAmount.ok ? parsedAmount.value : 0n;
   const dur = parsedDays.ok ? parsedDays.value : 0;
   const valid = parsedAmount.ok && parsedDays.ok;
-  const projected = valid ? yieldOf(amt, spec.apy, dur) : 0n;
-  const penalty = valid ? penaltyOf(amt, spec.penalty) : 0n;
+  const projected = valid ? projectYieldStroops(amt, dur, type) : 0n;
+  const penalty = valid ? (amt * BigInt(penaltyBps)) / 10_000n : 0n;
 
   function pickType(t: CommitmentType) {
     setType(t);
-    const min = specFor(t).minDays;
-    const current = parseDays(days);
-    if (!current.ok || current.value < min) setDays(String(min));
   }
 
   function submit() {
@@ -103,8 +112,8 @@ export default function CreatePage() {
       amount: amt.toString(),
       durationDays: dur,
       maxLoss: spec.maxLoss,
-      penalty: spec.penalty,
-      apy: spec.apy,
+      penalty: currentPenaltyPct,
+      apy: currentApy,
       createdAt: Date.now(),
       status: 'active',
       owner: address,
@@ -183,7 +192,7 @@ export default function CreatePage() {
               >
                 <h3>{t.name}</h3>
                 <p className="muted">{t.tagline}</p>
-                <b>{t.apy}% APY</b>
+                <b>{DISPLAY_APY[t.id]}% APY</b>
               </button>
             ))}
           </div>
@@ -200,6 +209,11 @@ export default function CreatePage() {
           <h2 ref={headingRef} tabIndex={-1}>
             Configure
           </h2>
+          {isFallback && (
+            <p className="muted small" role="note">
+              Could not verify on-chain parameters. Displaying default protocol parameters.
+            </p>
+          )}
           <label>
             Asset
             <select value={asset} onChange={(e) => setAsset(e.target.value)}>
@@ -223,7 +237,7 @@ export default function CreatePage() {
               />
             </label>
             <small id="amount" className="muted">
-              Digits and an optional decimal point, up to 7 decimals.
+              Digits and an optional decimal point, up to 7 decimals (max {formatAmount(MAX_AMOUNT)} {asset}).
             </small>
             {showAmountErr && (
               <small id="amount-err" className="err">
@@ -246,7 +260,7 @@ export default function CreatePage() {
               />
             </label>
             <small id="days" className="muted">
-              Whole days, from {spec.minDays} to 365.
+              Whole days, from {MIN_DURATION_DAYS} to {MAX_DURATION_DAYS} (recommended for {spec.name}: {spec.minDays}+ days).
             </small>
             {showDaysErr && (
               <small id="days-err" className="err">
@@ -261,7 +275,11 @@ export default function CreatePage() {
             </li>
             <li>
               <span>Early exit penalty</span>
-              <b>{spec.penalty}%</b>
+              {paramsLoading ? (
+                <Skeleton width="60px" height="20px" />
+              ) : (
+                <b>{currentPenaltyPct}%</b>
+              )}
             </li>
             <li>
               <span>Projected yield</span>
@@ -286,6 +304,11 @@ export default function CreatePage() {
           <h2 ref={headingRef} tabIndex={-1}>
             Review
           </h2>
+          {isFallback && (
+            <p className="muted small" role="note">
+              Could not verify on-chain parameters. Displaying default protocol parameters.
+            </p>
+          )}
           <ul className="kv">
             <li>
               <span>Type</span>
@@ -303,7 +326,7 @@ export default function CreatePage() {
             </li>
             <li>
               <span>Target APY</span>
-              <b>{spec.apy}%</b>
+              <b>{currentApy}%</b>
             </li>
             <li>
               <span>Projected yield</span>
@@ -313,9 +336,13 @@ export default function CreatePage() {
             </li>
             <li>
               <span>Early exit penalty</span>
-              <b>
-                {spec.penalty}% ({formatAmount(penalty)} {asset})
-              </b>
+              {paramsLoading ? (
+                <Skeleton width="120px" height="20px" />
+              ) : (
+                <b>
+                  {currentPenaltyPct}% ({formatAmount(penalty)} {asset})
+                </b>
+              )}
             </li>
           </ul>
           <label className="check">

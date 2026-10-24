@@ -7,6 +7,18 @@ vi.mock('@/components/WalletProvider', () => ({
   useWallet: () => ({ address: null }),
 }));
 
+vi.mock('@/lib/protocol', () => {
+  const params = {
+    penalties: { safe: 200, balanced: 500, aggressive: 1000 },
+    gracePeriodSeconds: 0,
+    isFallback: true,
+  };
+  return {
+    FALLBACK_PROTOCOL_PARAMS: params,
+    useProtocolParams: () => ({ params, loading: false, isFallback: true, refresh: () => {} }),
+  };
+});
+
 const click = (name: string) => fireEvent.click(screen.getByRole('button', { name }));
 
 function openConfigure() {
@@ -73,7 +85,7 @@ describe('create wizard amount input', () => {
     ['14.0', /whole days only/i],
     ['-3', /whole days only/i],
     ['', /enter the lock duration/i],
-    ['13', /minimum lock for balanced is 14 days/i],
+    ['0', /minimum lock is 1 day/i],
     ['366', /maximum lock is 365 days/i],
   ])('rejects duration %j with a specific reason', (value, message) => {
     const { days } = openConfigure();
@@ -93,8 +105,8 @@ describe('create wizard amount input', () => {
 
     expect(screen.getByRole('heading', { name: 'Review' })).toBeTruthy();
     expect(screen.getByText('1,000 USDC')).toBeTruthy();
-    // 1,000 at 9% for 14 days = 3.4520547 (floored), penalty 5% = 50
-    expect(screen.getByText('3.4520547 USDC')).toBeTruthy();
+    // 1,000 balanced (700 bps) for 14 days = 2.6849315 (floored), penalty 5% = 50
+    expect(screen.getByText('2.6849315 USDC')).toBeTruthy();
     expect(screen.getByText('5% (50 USDC)')).toBeTruthy();
   });
 

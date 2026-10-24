@@ -1,8 +1,12 @@
-import { STELLAR_DECIMALS, formatAmount, yieldOf } from './amount';
+import { STELLAR_DECIMALS, formatAmount } from './amount';
 import { isStorageAvailable, readRaw, removeRaw, subscribeStorage, writeRaw } from './storage';
+import type { DisputeRecord } from '@/lib/soroban/dispute';
 
-export type CommitmentType = 'safe' | 'balanced' | 'aggressive';
-export type CommitmentStatus = 'active' | 'matured' | 'settled' | 'exited';
+import { DISPLAY_APY, type RiskProfile, projectYieldStroops } from './yield';
+import { FALLBACK_PROTOCOL_PARAMS } from './protocol';
+
+export type CommitmentType = RiskProfile;
+export type CommitmentStatus = 'active' | 'matured' | 'settled' | 'exited' | 'disputed' | 'violated';
 
 export interface TypeSpec {
   id: CommitmentType;
@@ -19,27 +23,27 @@ export const TYPES: TypeSpec[] = [
     id: 'safe',
     name: 'Safe',
     tagline: 'Capital preservation with tight loss limits.',
-    apy: 4.5,
+    apy: DISPLAY_APY.safe,
     maxLoss: 2,
-    penalty: 3,
+    penalty: FALLBACK_PROTOCOL_PARAMS.penalties.safe / 100,
     minDays: 7,
   },
   {
     id: 'balanced',
     name: 'Balanced',
     tagline: 'Moderate yield with moderate drawdown tolerance.',
-    apy: 9,
+    apy: DISPLAY_APY.balanced,
     maxLoss: 8,
-    penalty: 5,
+    penalty: FALLBACK_PROTOCOL_PARAMS.penalties.balanced / 100,
     minDays: 14,
   },
   {
     id: 'aggressive',
     name: 'Aggressive',
     tagline: 'Maximum yield, wide loss tolerance, longer lock.',
-    apy: 16,
+    apy: DISPLAY_APY.aggressive,
     maxLoss: 20,
-    penalty: 8,
+    penalty: FALLBACK_PROTOCOL_PARAMS.penalties.aggressive / 100,
     minDays: 30,
   },
 ];
@@ -60,6 +64,8 @@ export interface Commitment {
   txHash: string | null;
   /** Present and true for sample records loaded from the empty state. */
   demo?: boolean;
+  /** Present when the commitment is frozen and its dispute record is known. */
+  dispute?: DisputeRecord;
 }
 
 /** Result of reading persisted commitments; never throws. */
@@ -84,7 +90,7 @@ const MAX_OWNER = 256;
 const MAX_TX_HASH = 128;
 
 const TYPE_IDS = new Set<string>(TYPES.map((t) => t.id));
-const STATUS_IDS = new Set<CommitmentStatus>(['active', 'matured', 'settled', 'exited']);
+const STATUS_IDS = new Set<CommitmentStatus>(['active', 'matured', 'settled', 'exited', 'disputed', 'violated']);
 
 export function specFor(type: CommitmentType): TypeSpec {
   return TYPES.find((t) => t.id === type) ?? TYPES[1]!;
@@ -104,8 +110,12 @@ export function progressOf(c: Commitment, now = Date.now()): number {
   return Math.max(0, Math.min(1, (now - c.createdAt) / total));
 }
 
+/**
+ * Projected yield in base units, using the contract's integer math
+ * (`projectYieldStroops`) on the exact stored principal.
+ */
 export function projectedYield(c: Commitment): bigint {
-  return yieldOf(BigInt(c.amount), c.apy, c.durationDays);
+  return projectYieldStroops(BigInt(c.amount), c.durationDays, c.type);
 }
 
 let fallbackCounter = 0;
@@ -194,6 +204,7 @@ export function validateCommitment(value: unknown): Commitment | null {
     owner: typeof o.owner === 'string' ? o.owner : null,
     txHash: typeof o.txHash === 'string' ? o.txHash : null,
     ...(o.demo === true ? { demo: true } : {}),
+    ...(o.dispute !== undefined ? { dispute: o.dispute as DisputeRecord } : {}),
   };
 }
 
@@ -324,8 +335,8 @@ export function sampleCommitments(): Commitment[] {
       amount: '25000000000',
       durationDays: 30,
       maxLoss: 8,
-      penalty: 5,
-      apy: 9,
+      penalty: FALLBACK_PROTOCOL_PARAMS.penalties.balanced / 100,
+      apy: DISPLAY_APY.balanced,
       createdAt: now - 12 * DAY,
       status: 'active',
       owner: null,
@@ -339,8 +350,8 @@ export function sampleCommitments(): Commitment[] {
       amount: '100000000000',
       durationDays: 14,
       maxLoss: 2,
-      penalty: 3,
-      apy: 4.5,
+      penalty: FALLBACK_PROTOCOL_PARAMS.penalties.safe / 100,
+      apy: DISPLAY_APY.safe,
       createdAt: now - 20 * DAY,
       status: 'active',
       owner: null,
