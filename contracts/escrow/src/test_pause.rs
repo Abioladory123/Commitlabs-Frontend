@@ -47,7 +47,7 @@ fn setup<'a>(env: &'a Env) -> TestFixture<'a> {
     token.mint(&admin, &10_000_000);
 
     // Seed yield pool with surplus so releases and yield withdrawals have liquidity
-    client.deposit_yield_pool(&admin, &500_000);
+    client.deposit_yield_pool(&500_000);
 
     TestFixture {
         env: env.clone(),
@@ -280,7 +280,7 @@ fn paused_blocks_deposit_yield_pool() {
     let admin_bal_before = f.token_client.balance(&f.admin);
     let pool_before = f.client.get_yield_pool_balance();
 
-    let res = f.client.try_deposit_yield_pool(&f.admin, &50_000);
+    let res = f.client.try_deposit_yield_pool(&50_000);
     assert_eq!(res, Err(Ok(Error::Paused)));
 
     assert_eq!(f.token_client.balance(&f.admin), admin_bal_before);
