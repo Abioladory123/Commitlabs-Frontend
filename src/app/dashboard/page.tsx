@@ -360,7 +360,18 @@ export default function DashboardPage() {
                       {c.demo && <span className="badge demo">demo</span>}
                     </h3>
                     <p className="muted small">
-                      <span>{c.id}</span> &middot; {specFor(c.type).name} &middot; {c.apy}% APY &middot; max
+                      {/^\d+$/.test(c.id) ? (
+                        <Link
+                          href={`/commitments/${c.id}`}
+                          className="link"
+                          title={`View on-chain commitment #${c.id}`}
+                        >
+                          #{c.id}
+                        </Link>
+                      ) : (
+                        <span>{c.id}</span>
+                      )}{' '}
+                      &middot; {specFor(c.type).name} &middot; {c.apy}% APY &middot; max
                       loss {c.maxLoss}%
                     </p>
                     {frozen && record && (
@@ -551,7 +562,17 @@ export default function DashboardPage() {
               <div className="row gap">
                 <span className={`badge ${ev.kind}`}>{ev.kind}</span>
                 <span>
-                  {ev.commitmentId ? `Commitment #${ev.commitmentId}` : 'Contract Action'}
+                  {ev.commitmentId ? (
+                    <Link
+                      href={`/commitments/${ev.commitmentId}`}
+                      className="link"
+                      title={`View Commitment #${ev.commitmentId}`}
+                    >
+                      Commitment #{ev.commitmentId}
+                    </Link>
+                  ) : (
+                    'Contract Action'
+                  )}
                 </span>
                 {ev.amount && <b className="small">{fmt(Number(ev.amount))} XLM</b>}
               </div>
